@@ -207,6 +207,7 @@ async def simulate_transaction(tx_hash, block_number, from_address, to_address, 
             blob = bucket.blob(f'{network}/simulations/condensed/{block_number}/{tx_hash}.json')
             blob.upload_from_string(json.dumps(condensed))
             print(f'{tx_hash} condensed written successfully to bucket')
+        return condensed
 
 async def main(start_day, end_day, network):
     block_ranges = await get_block_ranges_for_date_range(start_day, end_day, network)

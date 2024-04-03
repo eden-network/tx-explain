@@ -35,11 +35,11 @@ async def read_json_files(client, network):
             json_data.append((file_path, data))
     return json_data
 
-async def send_request_to_model(client, payload, system_prompt=None):
+async def explain_transaction(client, payload, system_prompt=None, model="claude-3-opus-20240229", max_tokens=2000, temperature=0):
     request_params = {
-        'model': "claude-3-opus-20240229",
-        'max_tokens': 2000,
-        'temperature': 0,
+        'model': model,
+        'max_tokens': max_tokens,
+        'temperature': temperature,
         'messages': [
             {
                 "role": "user",
@@ -57,32 +57,29 @@ async def send_request_to_model(client, payload, system_prompt=None):
         request_params['system'] = system_prompt
 
     response = await client.messages.create(**request_params)
-
+    resjson = {}
     if response.content and response.content[0] and response.content[0].text and response.content[0].text != '':
-        resjson = {}
         try:
-            print(response)
             resobj = await extract_json(response.content[0].text)
             resjson = json.loads(resobj)
-            print(resjson)
         except:
             print(f'Error parsing response: {response}')
-            resjson = {}
-        return resjson
     else:
         print(f'Unexpected response: {response}')
-        return
+    return resjson
 
 async def write_result_to_bucket(storage_client, file_path, result, network):
     bucket = storage_client.bucket(BUCKET_NAME)
     result_blob = bucket.blob(file_path.replace(f'{network}/simulations/condensed/', f'{network}/results/'))
-    result_blob.upload_from_string(json.dumps(result, indent=2))
+    result_blob.upload_from_string(json.dumps(result, separators=(',', ':')))
 
 async def process_json_file(anthropic_client, storage_client, file_path, data, network, semaphore, delay_time, system_prompt):
     async with semaphore:
         print(f'Analyzing: {file_path}...')
-        response = await send_request_to_model(anthropic_client, data, system_prompt)
+        response = await explain_transaction(anthropic_client, data, system_prompt)
         if response and response != {}:
+            tx_hash = os.path.splitext(os.path.basename(file_path))[0]
+            response['tx_hash'] = tx_hash
             await write_result_to_bucket(storage_client, file_path, response, network)
         else:
             print(f'Error processing {file_path}')
@@ -119,8 +116,8 @@ if __name__ == '__main__':
                         help='Delay time between API requests in seconds (default: 1.2)')
     parser.add_argument('-c', '--concurrency', type=int, default=1,
                         help='Maximum number of concurrent connections to the API (default: 1)')
-    parser.add_argument('-s', '--skip', type=str, nargs='+', default=['transfer', 'approve', 'transferFrom'],
-                        help='List of function calls to skip (default: transfer approve transferFrom)')
+    parser.add_argument('-s', '--skip', type=str, nargs='+', default=None,
+                        help='List of function calls to skip (default: None, suggested: transfer approve transferFrom)')
     parser.add_argument('-p', '--prompt', type=str, default=None,
                         help='Path to the file containing the system prompt (default: None)')
     args = parser.parse_args()
