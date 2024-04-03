@@ -9,7 +9,7 @@ from dotenv import load_dotenv
 
 load_dotenv()
 
-bucket_name = 'tx_explain'
+bucket_name = os.getenv('GCS_BUCKET_NAME')
 
 bigquery_client = bigquery.Client()
 storage_client = storage.Client()

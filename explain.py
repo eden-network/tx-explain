@@ -8,7 +8,7 @@ from google.cloud import storage
 
 load_dotenv()  # Load environment variables from .env file
 
-BUCKET_NAME = 'tx_explain'
+BUCKET_NAME = os.getenv('GCS_BUCKET_NAME')
 
 async def extract_json(string):
     start_index = string.find('{')
