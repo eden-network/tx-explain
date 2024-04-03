@@ -120,11 +120,11 @@ async def get_transaction():
     if not tx_hash:
         return jsonify({'error': 'Missing transaction hash'}), 400
     
-    # Map network IDs to Alchemy API endpoints and network names
+    # Map network IDs to RPC API endpoints and network names
     network_endpoints = {
-        '1': (os.getenv('ETH_ALCHEMY_ENDPOINT'), 'ethereum'),
-        '42161': (os.getenv('ARB_ALCHEMY_ENDPOINT'), 'arbitrum'),
-        '10': (os.getenv('OP_ALCHEMY_ENDPOINT'), 'optimism'),
+        '1': (os.getenv('ETH_RPC_ENDPOINT'), 'ethereum'),
+        '42161': (os.getenv('ARB_RPC_ENDPOINT'), 'arbitrum'),
+        '10': (os.getenv('OP_RPC_ENDPOINT'), 'optimism'),
         '43114': ('https://api.avax.network/ext/bc/C/rpc', 'avalanche')
     }
     
@@ -140,7 +140,7 @@ async def get_transaction():
         result = blob.download_as_string().decode('utf-8')
         return jsonify({'result': json.loads(result)}), 200
     
-    # Query the Alchemy API to get the transaction details
+    # Query the RPC API to get the transaction details
     if network_id == '43114':  # Avalanche uses a different API endpoint
         url = f"{url}?txhash={tx_hash}"
     else:
