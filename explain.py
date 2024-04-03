@@ -35,7 +35,7 @@ async def read_json_files(client, network):
             json_data.append((file_path, data))
     return json_data
 
-async def explain_transaction(client, payload, system_prompt=None, model="claude-3-opus-20240229", max_tokens=2000, temperature=0):
+async def explain_transaction(client, payload, system_prompt=None, model="claude-3-sonnet-20240229", max_tokens=2000, temperature=0):
     request_params = {
         'model': model,
         'max_tokens': max_tokens,
