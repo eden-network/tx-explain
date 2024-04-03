@@ -6,3 +6,4 @@ anthropic==0.20.0
 asyncio==3.12.2
 aiohttp==3.9.3
 flask==3.0.2
+flask_httpauth==4.8.0
