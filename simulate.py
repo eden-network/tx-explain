@@ -139,7 +139,6 @@ async def query_transactions(start_day, end_day, start_block, end_block, network
             from_address, 
             to_address, 
             gas, 
-            gas_price, 
             value, 
             input, 
             transaction_index 
@@ -154,7 +153,77 @@ async def query_transactions(start_day, end_day, start_block, end_block, network
     print(f"Job {query_job.job_id} started.")
     return list(query_job)
 
-async def simulate_transaction(tx_hash, block_number, from_address, to_address, gas, gas_price, value, input_data, tx_index, network):
+async def clean_calltrace(calltrace):
+    traces = []
+    for call in calltrace:
+        trace = {
+            'contract_name': call.get('contract_name', ''),
+            'function': call.get('function_name', ''),
+            'from': call.get('from', ''),
+            'from_balance': call.get('from_balance', ''),
+            'to': call.get('to', ''),
+            'input': call.get('input', ''),
+            'output': call.get('output', ''),
+            'value': call.get('value', ''),
+        }
+        if 'caller' in call:
+            trace['caller'] = call['caller'].get('address', '')
+            trace['caller_balance'] = call['caller'].get('balance', '')
+        if 'decoded_input' in call and call['decoded_input']:
+            decoded_inputs = []
+            for input_data in call['decoded_input']:
+                decoded_inputs.append({
+                    'name': input_data['soltype'].get('name', ''),
+                    'type': input_data['soltype'].get('type', ''),
+                    'value': input_data.get('value', ''),
+                })
+            trace['decoded_input'] = decoded_inputs
+        if 'decoded_output' in call and call['decoded_output']:
+            decoded_outputs = []
+            for output_data in call['decoded_output']:
+                decoded_outputs.append({
+                    'name': output_data['soltype'].get('name', ''),
+                    'type': output_data['soltype'].get('type', ''),
+                    'value': output_data.get('value', ''),
+                })
+            trace['decoded_output'] = decoded_outputs
+        subcalls = call.get('calls', [])
+        if subcalls:
+            trace['calls'] = await clean_calltrace(subcalls)
+        traces.append(trace)
+    return traces
+
+
+async def extract_useful_fields(sim_data, tx_hash):
+    result = {}
+    result['hash'] = tx_hash
+    result['call_trace'] = []
+    result['asset_changes'] = []
+    if 'transaction' in sim_data and 'transaction_info' in sim_data['transaction']:
+        call_trace = sim_data['transaction']['transaction_info'].get('call_trace')
+        if call_trace:
+            result['call_trace'] = await clean_calltrace([call_trace])
+        
+        for asset_change in sim_data['transaction']['transaction_info']['asset_changes']:
+            result['asset_changes'].append({
+                'type': asset_change.get('type', ''),
+                'from': asset_change.get('from', ''),
+                'to': asset_change.get('to', ''),
+                'amount': asset_change.get('amount', ''),
+                'dollar_value': asset_change.get('dollar_value', ''),
+                'token_info': {
+                    'standard': asset_change.get('token_info', {}).get('standard', ''),
+                    'type': asset_change.get('token_info', {}).get('type', ''),
+                    'symbol': asset_change.get('token_info', {}).get('symbol', ''),
+                    'name': asset_change.get('token_info', {}).get('name', ''),
+                    'decimals': asset_change.get('token_info', {}).get('decimals', ''),
+                    'contract_address': asset_change.get('token_info', {}).get('contract_address', ''),
+                },
+            })
+    return result
+
+
+async def simulate_transaction(tx_hash, block_number, from_address, to_address, gas, value, input_data, tx_index, network):
     tenderly_account_slug = os.getenv('TENDERLY_ACCOUNT_SLUG')
     tenderly_project_slug = os.getenv('TENDERLY_PROJECT_SLUG')
     tenderly_access_key = os.getenv('TENDERLY_ACCESS_KEY')
@@ -165,7 +234,6 @@ async def simulate_transaction(tx_hash, block_number, from_address, to_address, 
         'from': from_address,
         'to': to_address,
         'gas': gas,
-        'gas_price': gas_price,
         'value': value,
         'input': input_data,
         'transaction_index': tx_index,
@@ -194,6 +262,10 @@ async def simulate_transaction(tx_hash, block_number, from_address, to_address, 
         blob.upload_from_string(json.dumps(sim_data, indent=2))
         print(f'{tx_hash} written successfully to bucket')
 
+        trimmed = await extract_useful_fields(sim_data, tx_hash)
+        blob = bucket.blob(f'{network}/simulations/trimmed/{block_number}/{tx_hash}.json')
+        blob.upload_from_string(json.dumps(trimmed))
+        
         condensed = {}
         call_trace = sim_data['transaction']['transaction_info'].get('call_trace')
         if call_trace:
@@ -207,7 +279,7 @@ async def simulate_transaction(tx_hash, block_number, from_address, to_address, 
             blob = bucket.blob(f'{network}/simulations/condensed/{block_number}/{tx_hash}.json')
             blob.upload_from_string(json.dumps(condensed))
             print(f'{tx_hash} condensed written successfully to bucket')
-        return condensed
+        return trimmed
 
 async def main(start_day, end_day, network):
     block_ranges = await get_block_ranges_for_date_range(start_day, end_day, network)
@@ -231,7 +303,6 @@ async def main(start_day, end_day, network):
                     tx['from_address'],
                     tx['to_address'],
                     tx['gas'],
-                    tx['gas_price'],
                     str(tx['value']),
                     tx['input'],
                     tx['transaction_index'],

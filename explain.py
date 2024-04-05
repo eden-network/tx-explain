@@ -56,17 +56,14 @@ async def explain_transaction(client, payload, system_prompt=None, model="claude
     if system_prompt:
         request_params['system'] = system_prompt
 
-    response = await client.messages.create(**request_params)
-    resjson = {}
-    if response.content and response.content[0] and response.content[0].text and response.content[0].text != '':
-        try:
-            resobj = await extract_json(response.content[0].text)
-            resjson = json.loads(resobj)
-        except:
-            print(f'Error parsing response: {response}')
-    else:
-        print(f'Unexpected response: {response}')
-    return resjson
+
+    try:
+        async with client.messages.stream(**request_params) as stream:
+            async for word in stream.text_stream:
+                yield word
+        yield "/n"
+    except Exception as e:
+        print(f"Error streaming explanation: {str(e)}")
 
 async def write_result_to_bucket(storage_client, file_path, result, network):
     bucket = storage_client.bucket(BUCKET_NAME)
