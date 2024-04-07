@@ -87,12 +87,12 @@ async def simulate_txs(transactions, network):
     result = []
     for transaction in transactions:
         try:
-            condensed_simulation = await simulate_transaction(
+            trimmed_simulation = await simulate_transaction(
                 transaction.hash, transaction.block_number, transaction.from_address,
                 transaction.to_address, transaction.gas,
                 transaction.value, transaction.input, transaction.transaction_index, network
             )
-            result.append(condensed_simulation)
+            result.append(trimmed_simulation)
         except Exception as e:
             raise HTTPException(status_code=500, detail=f"Error simulating transaction: {str(e)}")
     return result
@@ -123,14 +123,14 @@ async def simulate_and_explain_txs(transactions, network, system_prompt, model, 
     result = []
     for transaction in transactions:
         try:
-            condensed_simulation = await simulate_transaction(
+            trimmed_simulation = await simulate_transaction(
                 transaction.hash, transaction.block_number, transaction.from_address,
                 transaction.to_address, transaction.gas,
                 transaction.value, transaction.input, transaction.transaction_index, network
             )
-            print(condensed_simulation)
+            print(trimmed_simulation)
             explanation = await explain_transaction(
-                ANTHROPIC_CLIENT, condensed_simulation, system_prompt, model, max_tokens, temperature
+                ANTHROPIC_CLIENT, trimmed_simulation, system_prompt, model, max_tokens, temperature
             )
             result.append(explanation)
         except Exception as e:
@@ -289,7 +289,7 @@ async def process_transaction(request: TransactionRequest, _: str = Depends(auth
         if request.network_id not in network_endpoints:
             raise HTTPException(status_code=400, detail='Unsupported network ID')
         url, network_name = network_endpoints[request.network_id]
-        name = f"{network_name}/explanations/{request.tx_hash}.json"
+        name = f"{network_name}/transactions/explanations/{request.tx_hash}.json"
         blob = GCS_BUCKET.blob(name)
         if blob.exists():
             print(f"Found cached explanation for {request.tx_hash}")
@@ -347,4 +347,4 @@ async def http_exception_handler(request: Request, exc: HTTPException):
     )
 
 if __name__ == "__main__":
-    uvicorn.run("webserver:app", host="0.0.0.0", port=5000, log_level="debug", reload=True)
+    uvicorn.run("webserver:app", host="0.0.0.0", port=os.getenv('PORT'), log_level="debug", reload=True)

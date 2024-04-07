@@ -194,18 +194,26 @@ async def clean_calltrace(calltrace):
     return traces
 
 
-async def extract_useful_fields(sim_data, tx_hash):
+async def extract_useful_fields(sim_data):
     result = {}
-    result['hash'] = tx_hash
     result['call_trace'] = []
     result['asset_changes'] = []
-    if 'transaction' in sim_data and 'transaction_info' in sim_data['transaction']:
-        call_trace = sim_data['transaction']['transaction_info'].get('call_trace')
-        if call_trace:
-            result['call_trace'] = await clean_calltrace([call_trace])
+    call_trace = []
+    asset_changes = []
+    if 'transaction' in sim_data:
+        result['hash'] = sim_data['transaction'].get('hash')
+        if 'transaction_info' in sim_data['transaction']:
+            call_trace = sim_data['transaction']['transaction_info'].get('call_trace')
+            asset_changes = sim_data['transaction']['transaction_info'].get('asset_changes')
+
+    sim_data = None # Free up memory
+    
+    if call_trace:
+        result['call_trace'] = await clean_calltrace([call_trace])
         
-        for asset_change in sim_data['transaction']['transaction_info']['asset_changes']:
-            result['asset_changes'].append({
+    if asset_changes:
+        for asset_change in asset_changes:
+            asset_change_summary = {
                 'type': asset_change.get('type', ''),
                 'from': asset_change.get('from', ''),
                 'to': asset_change.get('to', ''),
@@ -219,7 +227,8 @@ async def extract_useful_fields(sim_data, tx_hash):
                     'decimals': asset_change.get('token_info', {}).get('decimals', ''),
                     'contract_address': asset_change.get('token_info', {}).get('contract_address', ''),
                 },
-            })
+            }
+            result['asset_changes'].append(asset_change_summary)
     return result
 
 
@@ -255,32 +264,26 @@ async def simulate_transaction(tx_hash, block_number, from_address, to_address, 
     print(sim_data)
     if sim_data and 'transaction' in sim_data:
         sim_data['transaction']['hash'] = tx_hash
-        sim_data['transaction']['transaction_info']['transaction_id'] = tx_hash
-        sim_data['transaction']['transaction_info']['call_trace']['hash'] = tx_hash
-
-        blob = bucket.blob(f'{network}/simulations/full/{block_number}/{tx_hash}.json')
-        blob.upload_from_string(json.dumps(sim_data, indent=2))
-        print(f'{tx_hash} written successfully to bucket')
-
-        trimmed = await extract_useful_fields(sim_data, tx_hash)
-        blob = bucket.blob(f'{network}/simulations/trimmed/{block_number}/{tx_hash}.json')
-        blob.upload_from_string(json.dumps(trimmed))
+        if 'transaction_info' in sim_data['transaction']:
+            sim_data['transaction']['transaction_info']['transaction_id'] = tx_hash
+            if 'call_trace' in sim_data['transaction']['transaction_info']:
+                sim_data['transaction']['transaction_info']['call_trace']['hash'] = tx_hash
+        try:
+            blob = bucket.blob(f'{network}/transactions/simulations/full/{tx_hash}.json')
+            blob.upload_from_string(json.dumps(sim_data))
+            print(f'{tx_hash} full simulation written successfully to bucket')
+        except Exception as e:
+            print(f'Error uploading full simulation for {tx_hash}: {str(e)}')
         
-        condensed = {}
-        call_trace = sim_data['transaction']['transaction_info'].get('call_trace')
-        if call_trace:
-            condensed['m'] = await condense_calls([call_trace])
-
-        tx_info = sim_data['transaction']['transaction_info']
-        if tx_info and 'asset_changes' in tx_info and tx_info['asset_changes']:
-            condensed['u'] = await condense_asset_changes(tx_info['asset_changes'])
-
-        if condensed:
-            blob = bucket.blob(f'{network}/simulations/condensed/{block_number}/{tx_hash}.json')
-            blob.upload_from_string(json.dumps(condensed))
-            print(f'{tx_hash} condensed written successfully to bucket')
+        trimmed = await extract_useful_fields(sim_data)
+        try:
+            blob = bucket.blob(f'{network}/transactions/simulations/trimmed/{tx_hash}.json')
+            blob.upload_from_string(json.dumps(trimmed))
+            print(f'{tx_hash} trimmed simulation written successfully to bucket')
+        except Exception as e:
+            print(f'Error uploading trimmed simulation for {tx_hash}: {str(e)}')
         return trimmed
-
+    return None
 async def main(start_day, end_day, network):
     block_ranges = await get_block_ranges_for_date_range(start_day, end_day, network)
 

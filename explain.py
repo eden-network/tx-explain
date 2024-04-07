@@ -22,11 +22,11 @@ async def extract_json(string):
 async def read_json_files(client, network):
     json_data = []
     bucket = client.bucket(BUCKET_NAME)
-    blobs = bucket.list_blobs(prefix=f'{network}/simulations/condensed/')
+    blobs = bucket.list_blobs(prefix=f'{network}/transactions/simulations/trimmed/')
     for blob in blobs:
         if blob.name.endswith('.json'):
             file_path = blob.name
-            results_file_path = file_path.replace(f'{network}/simulations/condensed/', f'{network}/results/')
+            results_file_path = file_path.replace(f'{network}/transactions/simulations/trimmed/', f'{network}/transactions/explanations/')
             if storage.Blob(results_file_path, bucket).exists():
                 continue
             data = json.loads(blob.download_as_string())
@@ -67,7 +67,7 @@ async def explain_transaction(client, payload, system_prompt=None, model="claude
 
 async def write_result_to_bucket(storage_client, file_path, result, network):
     bucket = storage_client.bucket(BUCKET_NAME)
-    result_blob = bucket.blob(file_path.replace(f'{network}/simulations/condensed/', f'{network}/results/'))
+    result_blob = bucket.blob(file_path.replace(f'{network}/transactions/simulations/trimmed/', f'{network}/transactions/explanations/'))
     result_blob.upload_from_string(json.dumps(result, separators=(',', ':')))
 
 async def process_json_file(anthropic_client, storage_client, file_path, data, network, semaphore, delay_time, system_prompt):
