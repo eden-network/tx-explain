@@ -17,9 +17,13 @@ from pydantic import BaseModel, Field
 load_dotenv()
 
 app = FastAPI()
+origins = ["*"]
+CORS_ALLOWED_ORIGINS = os.getenv('CORS_ALLOWED_ORIGINS')
+if CORS_ALLOWED_ORIGINS:
+    origins = CORS_ALLOWED_ORIGINS.split(',')
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
+    allow_origins=origins,
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
