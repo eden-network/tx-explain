@@ -21,6 +21,7 @@ origins = ["*"]
 CORS_ALLOWED_ORIGINS = os.getenv('CORS_ALLOWED_ORIGINS')
 if CORS_ALLOWED_ORIGINS:
     origins = CORS_ALLOWED_ORIGINS.split(',')
+    print(f"Allowed origins: {origins}")
 app.add_middleware(
     CORSMiddleware,
     allow_origins=origins,
@@ -133,6 +134,9 @@ async def explain_txs(transactions, network, system_prompt, model, max_tokens, t
         except Exception as e:
             raise HTTPException(status_code=500, detail=f"Error explaining transaction: {str(e)}")
 
+@app.post("/_ah/warmup")
+async def warmup():
+    return {"status": "ok"}
     
 @app.post("/v1/transaction/fetch")
 async def get_transaction(request: TransactionRequest, _: str = Depends(authenticate)):
