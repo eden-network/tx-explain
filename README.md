@@ -9,6 +9,7 @@ TX Explain is a Python-based project that allows you to simulate and analyze blo
 - Customize the analysis by providing an optional system prompt
 - Configure various parameters such as delay time between API requests, maximum concurrent connections, and function calls to skip
 - Store simulated transaction data and analysis results in a Google Cloud Storage bucket
+- Run the project in batch mode or server mode for different use cases
 
 ## Prerequisites
 
@@ -39,13 +40,14 @@ cd tx-explain
 pip install -r requirements.txt
 ```
 
-4. Create a `.env` file in the project root and add your API keys and configuration settings:
+4. Create a `.env` file from `.env.sample` in the project root and add your API keys and configuration settings:
 
 ```
 ANTHROPIC_API_KEY=your-anthropic-api-key
 TENDERLY_ACCOUNT_SLUG=your-tenderly-account-slug
 TENDERLY_PROJECT_SLUG=your-tenderly-project-slug
 TENDERLY_ACCESS_KEY=your-tenderly-access-key
+...
 ```
 
 5. Authenticate Google Cloud:
@@ -78,7 +80,9 @@ TENDERLY_ACCESS_KEY=your-tenderly-access-key
 
 ## Usage
 
-To run the TX Explain, use the `main.py` script with the desired command-line arguments:
+### Batch Mode
+
+To run TX Explain in batch mode, use the `main.py` script with the desired command-line arguments:
 
 ```
 python main.py -n <network> -s <start_date> -e <end_date> -d <delay_time> -c <max_concurrent_connections> -f <skip_functions> -p <system_prompt_file>
@@ -100,6 +104,14 @@ python main.py -n ethereum -s 2023-05-01 -e 2023-05-02 -d 1.5 -c 2 -f transfer a
 
 The script will first run `simulate.py` to simulate transactions for the specified network and date range, saving the results to a Google Cloud Storage bucket. Then, it will run `explain.py` to analyze the simulated transaction data using the Anthropic API, saving the analysis results back to the bucket.
 
+### Server Mode
+
+To run TX Explain in server mode, use the `webserver.py` script:
+
+```
+python webserver.py
+```
+
 ## Project Structure
 
 The project has the following structure:
@@ -113,6 +125,8 @@ tx-explain/
 │
 ├── explain.py
 │
+├── webserver.py
+│
 ├── system_prompt.txt
 │
 └── .env
@@ -121,6 +135,7 @@ tx-explain/
 - `main.py`: The main script that orchestrates the execution of `simulate.py` and `explain.py`.
 - `simulate.py`: The script responsible for simulating blockchain transactions using the Tenderly API.
 - `explain.py`: The script responsible for analyzing simulated transaction data using the Anthropic API.
+- `webserver.py`: (Optional) The script for running a web server with endpoints to simulate and explain transactions.
 - `system_prompt.txt`: (Optional) The file containing the custom system prompt for the Anthropic API.
 - `.env`: The file containing environment variables and configuration settings.
 
