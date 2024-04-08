@@ -9,6 +9,8 @@ from google.cloud import storage
 load_dotenv()  # Load environment variables from .env file
 
 BUCKET_NAME = os.getenv('GCS_BUCKET_NAME')
+storage_client = storage.Client()
+bucket = storage_client.bucket(BUCKET_NAME)
 
 async def extract_json(string):
     start_index = string.find('{')
@@ -19,9 +21,8 @@ async def extract_json(string):
     result = string[start_index : end_index + 1]    
     return result
 
-async def read_json_files(client, network):
+async def read_json_files(network):
     json_data = []
-    bucket = client.bucket(BUCKET_NAME)
     blobs = bucket.list_blobs(prefix=f'{network}/transactions/simulations/trimmed/')
     for blob in blobs:
         if blob.name.endswith('.json'):
@@ -35,7 +36,13 @@ async def read_json_files(client, network):
             json_data.append((file_path, data))
     return json_data
 
-async def explain_transaction(client, payload, system_prompt=None, model="claude-3-haiku-20240307", max_tokens=2000, temperature=0):
+async def get_cached_explanation(tx_hash, network):
+    blob = bucket.blob(f'{network}/transactions/explanations/{tx_hash}.json')
+    if blob.exists():
+        return json.loads(blob.download_as_string())
+    return None
+
+async def explain_transaction(client, payload, network='ethereum', system_prompt=None, model="claude-3-haiku-20240307", max_tokens=2000, temperature=0):
     request_params = {
         'model': model,
         'max_tokens': max_tokens,
@@ -56,28 +63,35 @@ async def explain_transaction(client, payload, system_prompt=None, model="claude
     if system_prompt:
         request_params['system'] = system_prompt
 
-
+    explanation = ""
     try:
         async with client.messages.stream(**request_params) as stream:
             async for word in stream.text_stream:
                 yield word
-        yield "/n"
+                explanation += word
     except Exception as e:
         print(f"Error streaming explanation: {str(e)}")
+    tx_hash = payload['hash']
+    if explanation and explanation != "" and tx_hash:
+        try:
+            await write_explanation_to_bucket(network, tx_hash, explanation)
+        except Exception as e:
+            print(f'Error uploading explanation for {tx_hash}: {str(e)}')
 
-async def write_result_to_bucket(storage_client, file_path, result, network):
-    bucket = storage_client.bucket(BUCKET_NAME)
-    result_blob = bucket.blob(file_path.replace(f'{network}/transactions/simulations/trimmed/', f'{network}/transactions/explanations/'))
-    result_blob.upload_from_string(json.dumps(result, separators=(',', ':')))
+async def write_explanation_to_bucket(network, tx_hash, explanation):
+    file_path = f'{network}/transactions/explanations/{tx_hash}.json'
+    blob = bucket.blob(file_path)
+    blob.upload_from_string(json.dumps({'result': explanation}))
 
-async def process_json_file(anthropic_client, storage_client, file_path, data, network, semaphore, delay_time, system_prompt):
+async def process_json_file(anthropic_client, file_path, data, network, semaphore, delay_time, system_prompt):
     async with semaphore:
         print(f'Analyzing: {file_path}...')
-        response = await explain_transaction(anthropic_client, data, system_prompt)
-        if response and response != {}:
-            tx_hash = os.path.splitext(os.path.basename(file_path))[0]
-            response['tx_hash'] = tx_hash
-            await write_result_to_bucket(storage_client, file_path, response, network)
+        explanation = ""
+        async for item in explain_transaction(anthropic_client, data, network=network, system_prompt=system_prompt):
+            explanation += item
+        if explanation and explanation != "":
+            tx_hash = data['hash']
+            await write_explanation_to_bucket(network, tx_hash, explanation)
         else:
             print(f'Error processing {file_path}')
         await asyncio.sleep(delay_time)
@@ -91,8 +105,7 @@ async def main(network, delay_time, max_concurrent_connections, skip_function_ca
         with open(system_prompt_file, 'r') as file:
             system_prompt = file.read()
 
-    storage_client = storage.Client()
-    json_data = await read_json_files(storage_client, network)
+    json_data = await read_json_files(network)
     
     api_key = os.getenv('ANTHROPIC_API_KEY')
     anthropic_client = AsyncAnthropic(api_key=api_key)
@@ -100,7 +113,7 @@ async def main(network, delay_time, max_concurrent_connections, skip_function_ca
     
     tasks = []
     for file_path, data in json_data:
-        task = asyncio.create_task(process_json_file(anthropic_client, storage_client, file_path, data, network, semaphore, delay_time, system_prompt))
+        task = asyncio.create_task(process_json_file(anthropic_client, file_path, data, network, semaphore, delay_time, system_prompt))
         tasks.append(task)
     
     await asyncio.gather(*tasks)

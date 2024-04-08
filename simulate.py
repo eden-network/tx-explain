@@ -13,6 +13,7 @@ bucket_name = os.getenv('GCS_BUCKET_NAME')
 
 bigquery_client = bigquery.Client()
 storage_client = storage.Client()
+bucket = storage_client.bucket(bucket_name)
 
 NETWORK_CONFIGS = {
     'ethereum': {
@@ -231,6 +232,11 @@ async def extract_useful_fields(sim_data):
             result['asset_changes'].append(asset_change_summary)
     return result
 
+async def get_cached_simulation(tx_hash, network):
+    blob = bucket.blob(f'{network}/transactions/simulations/trimmed/{tx_hash}.json')
+    if blob.exists():
+        return json.loads(blob.download_as_string())
+    return None
 
 async def simulate_transaction(tx_hash, block_number, from_address, to_address, gas, value, input_data, tx_index, network):
     tenderly_account_slug = os.getenv('TENDERLY_ACCOUNT_SLUG')
@@ -258,10 +264,7 @@ async def simulate_transaction(tx_hash, block_number, from_address, to_address, 
         headers={'X-Access-Key': tenderly_access_key},
     )
 
-    bucket = storage_client.bucket(bucket_name)
-
     sim_data = response.json()
-    print(sim_data)
     if sim_data and 'transaction' in sim_data:
         sim_data['transaction']['hash'] = tx_hash
         if 'transaction_info' in sim_data['transaction']:
