@@ -2,6 +2,7 @@ import os
 import json
 import asyncio
 import argparse
+from datetime import datetime
 from dotenv import load_dotenv
 from anthropic import AsyncAnthropic
 from google.cloud import storage
@@ -74,29 +75,30 @@ async def explain_transaction(client, payload, network='ethereum', system_prompt
     tx_hash = payload['hash']
     if explanation and explanation != "" and tx_hash:
         try:
-            await write_explanation_to_bucket(network, tx_hash, explanation)
+            await write_explanation_to_bucket(network, tx_hash, explanation, model)
         except Exception as e:
             print(f'Error uploading explanation for {tx_hash}: {str(e)}')
 
-async def write_explanation_to_bucket(network, tx_hash, explanation):
+async def write_explanation_to_bucket(network, tx_hash, explanation, model):
     file_path = f'{network}/transactions/explanations/{tx_hash}.json'
     blob = bucket.blob(file_path)
-    blob.upload_from_string(json.dumps({'result': explanation}))
+    updated_at = datetime.now().isoformat()
+    blob.upload_from_string(json.dumps({'result': explanation, 'model': model, 'updated_at': updated_at}))
 
-async def process_json_file(anthropic_client, file_path, data, network, semaphore, delay_time, system_prompt):
+async def process_json_file(anthropic_client, file_path, data, network, semaphore, delay_time, system_prompt, model):
     async with semaphore:
         print(f'Analyzing: {file_path}...')
         explanation = ""
-        async for item in explain_transaction(anthropic_client, data, network=network, system_prompt=system_prompt):
+        async for item in explain_transaction(anthropic_client, data, network=network, system_prompt=system_prompt, model=model):
             explanation += item
         if explanation and explanation != "":
             tx_hash = data['hash']
-            await write_explanation_to_bucket(network, tx_hash, explanation)
+            await write_explanation_to_bucket(network, tx_hash, explanation, model)
         else:
             print(f'Error processing {file_path}')
         await asyncio.sleep(delay_time)
 
-async def main(network, delay_time, max_concurrent_connections, skip_function_calls, system_prompt_file):
+async def main(network, delay_time, max_concurrent_connections, skip_function_calls, system_prompt_file, model):
     global SKIP_FUNCTION_CALLS
     SKIP_FUNCTION_CALLS = skip_function_calls
 
@@ -113,7 +115,7 @@ async def main(network, delay_time, max_concurrent_connections, skip_function_ca
     
     tasks = []
     for file_path, data in json_data:
-        task = asyncio.create_task(process_json_file(anthropic_client, file_path, data, network, semaphore, delay_time, system_prompt))
+        task = asyncio.create_task(process_json_file(anthropic_client, file_path, data, network, semaphore, delay_time, system_prompt, model))
         tasks.append(task)
     
     await asyncio.gather(*tasks)
@@ -130,6 +132,8 @@ if __name__ == '__main__':
                         help='List of function calls to skip (default: None, suggested: transfer approve transferFrom)')
     parser.add_argument('-p', '--prompt', type=str, default=None,
                         help='Path to the file containing the system prompt (default: None)')
+    parser.add_argument('-m', '--model', type=str, default='claude-3-haiku-20240307',
+                        help='Model to use for generating explanations (default: claude-3-haiku-20240307)')
     args = parser.parse_args()
 
     network = args.network
@@ -137,5 +141,6 @@ if __name__ == '__main__':
     max_concurrent_connections = args.concurrency
     skip_function_calls = args.skip
     system_prompt_file = args.prompt
+    model = args.model
 
-    asyncio.run(main(network, delay_time, max_concurrent_connections, skip_function_calls, system_prompt_file))
+    asyncio.run(main(network, delay_time, max_concurrent_connections, skip_function_calls, system_prompt_file, model))

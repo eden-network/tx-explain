@@ -8,11 +8,14 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse, StreamingResponse
 from anthropic import AsyncAnthropic
 from google.cloud import storage
+from googleapiclient.discovery import build
+from google.auth.transport.requests import Request
+from google.oauth2 import service_account
 from explain import explain_transaction, get_cached_explanation
 from simulate import simulate_transaction, get_cached_simulation
 from dotenv import load_dotenv
 from typing import List, Optional, Any
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, validator
 
 load_dotenv()
 
@@ -31,9 +34,16 @@ app.add_middleware(
 )
 auth_scheme = HTTPBearer()
 
-storage_client = storage.Client()
+SERVICE_ACCOUNT_FILE = os.getenv('GOOGLE_APPLICATION_CREDENTIALS')
+SCOPES = ['https://www.googleapis.com/auth/spreadsheets']
+CREDENTIALS = service_account.Credentials.from_service_account_file(
+            SERVICE_ACCOUNT_FILE, scopes=SCOPES)
+SHEETS_SERVICE = build('sheets', 'v4', credentials=CREDENTIALS)
+STORAGE_CLIENT = storage.Client()
+GOOGLE_SHEET_ID = os.getenv('GOOGLE_SHEET_ID')
+GOOGLE_WORKSHEET_NAME = os.getenv('GOOGLE_WORKSHEET_NAME')
 GCS_BUCKET_NAME = os.getenv('GCS_BUCKET_NAME')
-GCS_BUCKET = storage_client.bucket(GCS_BUCKET_NAME)
+GCS_BUCKET = STORAGE_CLIENT.bucket(GCS_BUCKET_NAME)
 ANTHROPIC_API_KEY = os.getenv('ANTHROPIC_API_KEY')
 ANTHROPIC_CLIENT = AsyncAnthropic(api_key=ANTHROPIC_API_KEY)
 DEFAULT_MODEL = os.getenv('DEFAULT_MODEL')
@@ -76,6 +86,37 @@ class ExplainTransactionsRequest(BaseModel):
     max_tokens: int = DEFAULT_MAX_TOKENS
     temperature: float = DEFAULT_TEMPERATURE
     force_refresh: bool = False
+
+class FeedbackForm(BaseModel):
+    date: str
+    network: str
+    txHash: str
+    explanation: str
+    model: str
+    systemPrompt: str
+    simulationData: str
+    comments: str
+    accuracy: int = Field(gt=0, lt=6)  # Ensures accuracy is between 1 and 5
+    quality: int = Field(gt=0, lt=6)  # Ensures quality is between 1 and 5
+    explorer: Optional[str] = None  # Will be set based on network and txHash
+
+
+    @validator('explorer', pre=True, always=True)
+    def set_explorer_url(cls, v, values):
+        network = values.get('network', '').lower()
+        tx_hash = values.get('txHash', '')
+        print(f"Network: {network}, txHash: {tx_hash}")
+        base_urls = {
+            'ethereum': 'https://etherscan.io/tx/',
+            'avalanche': 'https://snowtrace.io/tx/',
+            'optimism': 'https://optimistic.etherscan.io/tx/',
+            'arbitrum': 'https://arbiscan.io/tx/'
+        }
+        explorer_base_url = base_urls.get(network)
+        print(f"Explorer base URL: {explorer_base_url}")
+        if explorer_base_url and tx_hash:
+            return f"{explorer_base_url}{tx_hash}"
+        return v
 
 async def authenticate(authorization: HTTPAuthorizationCredentials = Depends(auth_scheme)):
     token = authorization.credentials
@@ -261,7 +302,23 @@ async def fetch_and_simulate_transaction(request: TransactionRequest, _: str = D
         raise e
     except Exception as e:
         raise HTTPException(status_code=400, detail=str(e))
-
+    
+@app.post("/v1/feedback")
+async def submit_feedback(feedback: FeedbackForm):
+    try:
+        values = [[
+            feedback.date, feedback.network, feedback.txHash, feedback.explorer,
+            feedback.explanation, feedback.model, feedback.systemPrompt,
+            feedback.simulationData, feedback.accuracy, feedback.quality, feedback.comments
+        ]]
+        body = {'values': values}
+        result = SHEETS_SERVICE.spreadsheets().values().append(
+            spreadsheetId=GOOGLE_SHEET_ID, range=f"{GOOGLE_WORKSHEET_NAME}!A1:K1",
+            valueInputOption='USER_ENTERED', insertDataOption='INSERT_ROWS', body=body).execute()
+        return {"message": "Feedback submitted successfully", "details": result}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to submit feedback: {str(e)}")
+    
 @app.exception_handler(HTTPException)
 async def http_exception_handler(request: Request, exc: HTTPException):
     return JSONResponse(
