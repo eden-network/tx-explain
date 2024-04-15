@@ -2,13 +2,13 @@ import os
 import time
 import requests
 import uvicorn
+import gspread
 from fastapi import FastAPI, Depends, HTTPException, Request
 from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse, StreamingResponse
 from anthropic import AsyncAnthropic
 from google.cloud import storage
-from googleapiclient.discovery import build
 from google.auth.transport.requests import Request
 from google.oauth2 import service_account
 from explain import explain_transaction, get_cached_explanation
@@ -16,6 +16,7 @@ from simulate import simulate_transaction, get_cached_simulation
 from dotenv import load_dotenv
 from typing import List, Optional, Any
 from pydantic import BaseModel, Field, validator
+from tenacity import retry, stop_after_attempt, wait_exponential
 
 load_dotenv()
 
@@ -35,10 +36,9 @@ app.add_middleware(
 auth_scheme = HTTPBearer()
 
 SERVICE_ACCOUNT_FILE = os.getenv('GOOGLE_APPLICATION_CREDENTIALS')
-SCOPES = ['https://www.googleapis.com/auth/spreadsheets']
+SCOPES = ['https://spreadsheets.google.com/feeds', 'https://www.googleapis.com/auth/drive']
 CREDENTIALS = service_account.Credentials.from_service_account_file(
             SERVICE_ACCOUNT_FILE, scopes=SCOPES)
-SHEETS_SERVICE = build('sheets', 'v4', credentials=CREDENTIALS)
 STORAGE_CLIENT = storage.Client()
 GOOGLE_SHEET_ID = os.getenv('GOOGLE_SHEET_ID')
 GOOGLE_WORKSHEET_NAME = os.getenv('GOOGLE_WORKSHEET_NAME')
@@ -105,7 +105,6 @@ class FeedbackForm(BaseModel):
     def set_explorer_url(cls, v, values):
         network = values.get('network', '').lower()
         tx_hash = values.get('txHash', '')
-        print(f"Network: {network}, txHash: {tx_hash}")
         base_urls = {
             'ethereum': 'https://etherscan.io/tx/',
             'avalanche': 'https://snowtrace.io/tx/',
@@ -113,7 +112,6 @@ class FeedbackForm(BaseModel):
             'arbitrum': 'https://arbiscan.io/tx/'
         }
         explorer_base_url = base_urls.get(network)
-        print(f"Explorer base URL: {explorer_base_url}")
         if explorer_base_url and tx_hash:
             return f"{explorer_base_url}{tx_hash}"
         return v
@@ -123,6 +121,17 @@ async def authenticate(authorization: HTTPAuthorizationCredentials = Depends(aut
     if token != os.getenv('API_TOKEN'):
         raise HTTPException(status_code=401, detail="Invalid token")
     return token
+
+@retry(stop=stop_after_attempt(3), wait=wait_exponential(multiplier=1))
+async def submit_feedback_with_retry(feedback: FeedbackForm):
+    client = gspread.authorize(CREDENTIALS)
+    sheet = client.open_by_key(GOOGLE_SHEET_ID).worksheet(GOOGLE_WORKSHEET_NAME)
+    values = [[
+        feedback.date, feedback.network, feedback.txHash, feedback.explorer,
+        feedback.explanation, feedback.model, feedback.systemPrompt,
+        feedback.simulationData, feedback.accuracy, feedback.quality, feedback.comments
+    ]]
+    sheet.append_rows(values)
 
 async def simulate_txs(transactions, network, force_refresh=False):
     result = []
@@ -175,8 +184,8 @@ async def explain_txs(transactions, network, system_prompt, model, max_tokens, t
         except Exception as e:
             raise HTTPException(status_code=500, detail=f"Error explaining transaction: {str(e)}")
 
-@app.post("/_ah/warmup")
-async def warmup():
+@app.get("/")
+async def root():
     return {"status": "ok"}
     
 @app.post("/v1/transaction/fetch")
@@ -306,16 +315,9 @@ async def fetch_and_simulate_transaction(request: TransactionRequest, _: str = D
 @app.post("/v1/feedback")
 async def submit_feedback(feedback: FeedbackForm):
     try:
-        values = [[
-            feedback.date, feedback.network, feedback.txHash, feedback.explorer,
-            feedback.explanation, feedback.model, feedback.systemPrompt,
-            feedback.simulationData, feedback.accuracy, feedback.quality, feedback.comments
-        ]]
-        body = {'values': values}
-        result = SHEETS_SERVICE.spreadsheets().values().append(
-            spreadsheetId=GOOGLE_SHEET_ID, range=f"{GOOGLE_WORKSHEET_NAME}!A1:K1",
-            valueInputOption='USER_ENTERED', insertDataOption='INSERT_ROWS', body=body).execute()
-        return {"message": "Feedback submitted successfully", "details": result}
+        print({"Submitting feedback": feedback.model_dump_json()})
+        await submit_feedback_with_retry(feedback)
+        return {"message": "Feedback submitted successfully"}
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Failed to submit feedback: {str(e)}")
     

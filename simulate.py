@@ -167,6 +167,8 @@ async def clean_calltrace(calltrace):
             'output': call.get('output', ''),
             'value': call.get('value', ''),
         }
+        if 'error' in call:
+            trace['error'] = call.get('error', '')
         if 'caller' in call:
             trace['caller'] = call['caller'].get('address', '')
             trace['caller_balance'] = call['caller'].get('balance', '')
@@ -203,6 +205,10 @@ async def extract_useful_fields(sim_data):
     asset_changes = []
     if 'transaction' in sim_data:
         result['hash'] = sim_data['transaction'].get('hash')
+        result['status'] = sim_data['transaction'].get('status', True)
+        if result['status'] == False:
+            if 'simulation' in sim_data:
+                result['error'] = sim_data['simulation'].get('error_message', '')
         if 'transaction_info' in sim_data['transaction']:
             call_trace = sim_data['transaction']['transaction_info'].get('call_trace')
             asset_changes = sim_data['transaction']['transaction_info'].get('asset_changes')
@@ -257,7 +263,6 @@ async def simulate_transaction(tx_hash, block_number, from_address, to_address, 
     }
 
     print(f'Simulating transaction: {tx_hash}')
-    print(tx_details)
     response = requests.post(
         f'https://api.tenderly.co/api/v1/account/{tenderly_account_slug}/project/{tenderly_project_slug}/simulate',
         json=tx_details,
