@@ -3,14 +3,13 @@ import time
 import requests
 import uvicorn
 import gspread
+import google.auth
 from fastapi import FastAPI, Depends, HTTPException, Request
 from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse, StreamingResponse
 from anthropic import AsyncAnthropic
 from google.cloud import storage
-from google.auth.transport.requests import Request
-from google.oauth2 import service_account
 from explain import explain_transaction, get_cached_explanation
 from simulate import simulate_transaction, get_cached_simulation
 from dotenv import load_dotenv
@@ -35,10 +34,8 @@ app.add_middleware(
 )
 auth_scheme = HTTPBearer()
 
-SERVICE_ACCOUNT_FILE = os.getenv('GOOGLE_APPLICATION_CREDENTIALS')
+CREDENTIALS, PROJECT_ID = google.auth.default()
 SCOPES = ['https://spreadsheets.google.com/feeds', 'https://www.googleapis.com/auth/drive']
-CREDENTIALS = service_account.Credentials.from_service_account_file(
-            SERVICE_ACCOUNT_FILE, scopes=SCOPES)
 STORAGE_CLIENT = storage.Client()
 GOOGLE_SHEET_ID = os.getenv('GOOGLE_SHEET_ID')
 GOOGLE_WORKSHEET_NAME = os.getenv('GOOGLE_WORKSHEET_NAME')
