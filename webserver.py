@@ -122,7 +122,7 @@ async def authenticate(authorization: HTTPAuthorizationCredentials = Depends(aut
         raise HTTPException(status_code=401, detail="Invalid token")
     return token
 
-@retry(stop=stop_after_attempt(3), wait=wait_exponential(multiplier=1))
+@retry(stop=stop_after_attempt(5), wait=wait_exponential(multiplier=1))
 async def submit_feedback_with_retry(feedback: FeedbackForm):
     client = gspread.authorize(CREDENTIALS)
     sheet = client.open_by_key(GOOGLE_SHEET_ID).worksheet(GOOGLE_WORKSHEET_NAME)
