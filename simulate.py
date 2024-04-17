@@ -6,7 +6,8 @@ import argparse
 from google.cloud import bigquery, storage
 from datetime import datetime, timedelta
 from dotenv import load_dotenv
-
+from web3 import Web3, AsyncWeb3
+w3 = AsyncWeb3(AsyncWeb3.AsyncHTTPProvider('https://cloudflare-eth.com'))
 load_dotenv()
 
 bucket_name = os.getenv('GCS_BUCKET_NAME')
@@ -238,6 +239,23 @@ async def extract_useful_fields(sim_data):
             result['asset_changes'].append(asset_change_summary)
     return result
 
+async def apply_decimals(sim_data):
+    result=sim_data
+    for call in result['call_trace']:
+        if (call["function"]=="approve"):
+            #if the call trace is approve, apply decimals directlly on the amount as there is no asset_change object
+            token_address=w3.to_checksum_address(call["to"])
+            abi='[ { "inputs":[ ], "name":"decimals", "outputs":[ { "internalType":"uint8", "name":"", "type":"uint8" } ], "stateMutability":"view", "type":"function" } ]'
+            contract = w3.eth.contract(address=token_address, abi=abi)
+            try:
+                token_decimals= await contract.functions.decimals().call()
+                for decoded_input in call["decoded_input"]:
+                    if decoded_input["name"]=="amount":
+                        decoded_input["value"]=int(decoded_input["value"])/10**token_decimals
+            except:
+                print("Web3 call failed")
+    return result
+
 async def get_cached_simulation(tx_hash, network):
     blob = bucket.blob(f'{network}/transactions/simulations/trimmed/{tx_hash}.json')
     if blob.exists():
@@ -283,7 +301,8 @@ async def simulate_transaction(tx_hash, block_number, from_address, to_address, 
         except Exception as e:
             print(f'Error uploading full simulation for {tx_hash}: {str(e)}')
         
-        trimmed = await extract_useful_fields(sim_data)
+        trimmed_initial = await extract_useful_fields(sim_data)
+        trimmed = await apply_decimals(trimmed_initial)
         try:
             blob = bucket.blob(f'{network}/transactions/simulations/trimmed/{tx_hash}.json')
             blob.upload_from_string(json.dumps(trimmed))
