@@ -5,6 +5,7 @@ import uvicorn
 import gspread
 import google.auth
 from fastapi import FastAPI, Depends, HTTPException, Request
+from fastapi.staticfiles import StaticFiles
 from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse, StreamingResponse
@@ -20,6 +21,7 @@ from tenacity import retry, stop_after_attempt, wait_exponential
 load_dotenv()
 
 app = FastAPI()
+app.mount("/static", StaticFiles(directory="static"), name="static")
 origins = ["*"]
 CORS_ALLOWED_ORIGINS = os.getenv('CORS_ALLOWED_ORIGINS')
 if CORS_ALLOWED_ORIGINS:
