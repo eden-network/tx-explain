@@ -306,6 +306,7 @@ async def apply_logs(sim_data):
                         asset_change["token_info"]["symbol"]=transfer["token_symbol"]
                         asset_change["token_info"]["name"]=transfer["token_name"]
                         asset_change["token_info"]["decimals"]=transfer["token_decimals"]    
+                        asset_change["token_info"]["type"]="Fungible"
     except :
         print ("Error in web3 call - logs")
     return result
