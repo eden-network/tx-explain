@@ -351,13 +351,20 @@ async def simulate_transaction(tx_hash, block_number, from_address, to_address, 
         try:
             blob = bucket.blob(f'{network}/transactions/simulations/full/{tx_hash}.json')
             blob.upload_from_string(json.dumps(sim_data))
-            print(f'{tx_hash} full simulation written successfully to bucket')
+            print(f'{"\n"} full simulation written successfully to bucket')
         except Exception as e:
             print(f'Error uploading full simulation for {tx_hash}: {str(e)}')
-        
+        f=open("static/log.txt","a")
+        f.write("\n")
+        f.write(str(tx_hash))
+        f.write("\n")
+        f.write("Exctracting useful fields \n")
         trimmed_initial = await extract_useful_fields(sim_data)
+        f.write("Applying decimals \n")
         trimmed_decimals = await apply_decimals(trimmed_initial)
+        f.write("Applying logs \n")
         trimmed= await apply_logs(trimmed_decimals)
+        f.write("Done \n")
         try:
             blob = bucket.blob(f'{network}/transactions/simulations/trimmed/{tx_hash}.json')
             blob.upload_from_string(json.dumps(trimmed))
