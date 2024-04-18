@@ -252,6 +252,11 @@ async def apply_decimals(sim_data):
                 for decoded_input in call["decoded_input"]:
                     if decoded_input["name"]=="amount":
                         decoded_input["value"]=int(decoded_input["value"])/10**token_decimals
+                for internal_call in call["calls"]:
+                    if internal_call["function"]=="_approve":
+                        for internal_decodec_input in internal_call["decoded_input"]:
+                            if internal_decodec_input["name"]=="amount":
+                                internal_decodec_input["value"]=int(internal_decodec_input["value"])/10**token_decimals
             except:
                 print("Web3 call failed")
     return result
