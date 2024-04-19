@@ -244,9 +244,11 @@ async def extract_useful_fields(sim_data):
 
 async def apply_decimals(sim_data):
     result=sim_data
+    logging.info("Applying decimals on edge cases")
     for call in result['call_trace']:
         if (call["function"]=="approve"):
             #if the call trace is approve, apply decimals directlly on the amount as there is no asset_change object
+            logging.info("FOUND AN APPROVAL TRANSACTION AND APPLYING DECIMALS")
             token_address=w3.to_checksum_address(call["to"])
             abi='[ { "inputs":[ ], "name":"decimals", "outputs":[ { "internalType":"uint8", "name":"", "type":"uint8" } ], "stateMutability":"view", "type":"function" } ]'
             contract = w3.eth.contract(address=token_address, abi=abi)
@@ -260,6 +262,7 @@ async def apply_decimals(sim_data):
     return result
 async def apply_logs(sim_data):
     result=sim_data
+    logging.info("Applying logs for edge cases")
     try:
         transfers=[]
         tokens={}
