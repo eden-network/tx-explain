@@ -255,7 +255,7 @@ async def apply_decimals(sim_data):
             try:
                 token_decimals= await contract.functions.decimals().call()
                 for decoded_input in call["decoded_input"]:
-                    if decoded_input["name"]=="amount":
+                    if decoded_input["name"]=="amount" or decoded_input["name"]=="_value":
                         decoded_input["value"]=int(decoded_input["value"])/10**token_decimals
             except:
                 logging.info("Web3 call failed: " + str(token_address))
