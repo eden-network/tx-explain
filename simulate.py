@@ -3,6 +3,7 @@ import json
 import asyncio
 import requests
 import argparse
+import logging
 from google.cloud import bigquery, storage
 from datetime import datetime, timedelta
 from dotenv import load_dotenv
@@ -11,6 +12,7 @@ import decimal
 w3 = AsyncWeb3(AsyncWeb3.AsyncHTTPProvider('https://cloudflare-eth.com'))
 load_dotenv()
 
+logging.getLogger().setLevel(logging.INFO)
 bucket_name = os.getenv('GCS_BUCKET_NAME')
 
 bigquery_client = bigquery.Client()
@@ -124,7 +126,7 @@ async def get_block_ranges_for_date_range(start_day, end_day, network):
         ORDER BY day
     """
     query_job = bigquery_client.query(query)
-    print(f"Job {query_job.job_id} started.")
+    logging.info(f"Job {query_job.job_id} started.")
     block_ranges = {}
     for row in query_job:
         block_ranges[row['day']] = {
@@ -153,7 +155,7 @@ async def query_transactions(start_day, end_day, start_block, end_block, network
             AND block_number <= {end_block}
     """
     query_job = bigquery_client.query(query)
-    print(f"Job {query_job.job_id} started.")
+    logging.info(f"Job {query_job.job_id} started.")
     return list(query_job)
 
 async def clean_calltrace(calltrace):
@@ -254,7 +256,7 @@ async def apply_decimals(sim_data):
                     if decoded_input["name"]=="amount":
                         decoded_input["value"]=int(decoded_input["value"])/10**token_decimals
             except:
-                print("Web3 call failed")
+                logging.info("Web3 call failed: " + str(token_address))
     return result
 async def apply_logs(sim_data):
     result=sim_data
@@ -308,7 +310,7 @@ async def apply_logs(sim_data):
                         asset_change["token_info"]["decimals"]=transfer["token_decimals"]    
                         asset_change["token_info"]["type"]="Fungible"
     except :
-        print ("Error in web3 call - logs")
+        logging.error ("Error in web3 call - logs: " + str(tx_hash) )
     return result
 async def get_cached_simulation(tx_hash, network):
     blob = bucket.blob(f'{network}/transactions/simulations/trimmed/{tx_hash}.json')
@@ -334,7 +336,7 @@ async def simulate_transaction(tx_hash, block_number, from_address, to_address, 
         'generate_access_list': True,
     }
 
-    print(f'Simulating transaction: {tx_hash}')
+    logging.info(f'Simulating transaction: {tx_hash}')
     response = requests.post(
         f'https://api.tenderly.co/api/v1/account/{tenderly_account_slug}/project/{tenderly_project_slug}/simulate',
         json=tx_details,
@@ -351,19 +353,18 @@ async def simulate_transaction(tx_hash, block_number, from_address, to_address, 
         try:
             blob = bucket.blob(f'{network}/transactions/simulations/full/{tx_hash}.json')
             blob.upload_from_string(json.dumps(sim_data))
-            print(f'{tx_hash} full simulation written successfully to bucket')
+            logging.info(f'{tx_hash} full simulation written successfully to bucket')
         except Exception as e:
-            print(f'Error uploading full simulation for {tx_hash}: {str(e)}')
-        
+            logging.error(f'Error uploading full simulation for {tx_hash}: {str(e)}')
         trimmed_initial = await extract_useful_fields(sim_data)
         trimmed_decimals = await apply_decimals(trimmed_initial)
         trimmed= await apply_logs(trimmed_decimals)
         try:
             blob = bucket.blob(f'{network}/transactions/simulations/trimmed/{tx_hash}.json')
             blob.upload_from_string(json.dumps(trimmed))
-            print(f'{tx_hash} trimmed simulation written successfully to bucket')
+            logging.info(f'{tx_hash} trimmed simulation written successfully to bucket')
         except Exception as e:
-            print(f'Error uploading trimmed simulation for {tx_hash}: {str(e)}')
+            logging.error(f'Error uploading trimmed simulation for {tx_hash}: {str(e)}')
         return trimmed
     return None
 async def main(start_day, end_day, network):
@@ -379,7 +380,7 @@ async def main(start_day, end_day, network):
         day_block_range = block_ranges[day]
         block_number = day_block_range['start']
         while block_number <= day_block_range['end']:
-            print(f"{day}: Querying transactions for block range {block_number} - {block_number + 1000}")
+            logging.info(f"{day}: Querying transactions for block range {block_number} - {block_number + 1000}")
             transactions = await query_transactions(day, next_day, block_number, block_number + 1000, network)
             for tx in transactions:
                 await simulate_transaction(
