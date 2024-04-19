@@ -10,12 +10,14 @@ asyncio
 aiohttp
 fastapi==0.110.1
 fastapi_limiter==0.1.6
+flipside==2.0.8
 starlette==0.37.2
 redis==5.1.0b4
 uvicorn==0.13.1
 uvloop
 httptools
 gunicorn
+pandas==1.4.1
 pydantic==2.6.4
 pydantic_core==2.16.3
 gspread
