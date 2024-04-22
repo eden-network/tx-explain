@@ -69,11 +69,13 @@ class TransactionRequest(BaseModel):
     max_tokens: int = DEFAULT_MAX_TOKENS
     temperature: float = DEFAULT_TEMPERATURE
     force_refresh: bool = False
+    recaptcha_token: str
 
 class SimulateTransactionsRequest(BaseModel):
     transactions: list[Transaction]
     network: str = 'ethereum'
     force_refresh: bool = False
+    recaptcha_token: str
 
 class ExplainTransactionsRequest(BaseModel):
     transactions: list[Any]
@@ -83,6 +85,7 @@ class ExplainTransactionsRequest(BaseModel):
     max_tokens: int = DEFAULT_MAX_TOKENS
     temperature: float = DEFAULT_TEMPERATURE
     force_refresh: bool = False
+    recaptcha_token: str
 
 class FeedbackForm(BaseModel):
     date: str
@@ -118,6 +121,15 @@ async def authenticate(authorization: HTTPAuthorizationCredentials = Depends(aut
     if token != os.getenv('API_TOKEN'):
         raise HTTPException(status_code=401, detail="Invalid token")
     return token
+
+async def verify_recaptcha(token: str) -> bool:
+    if os.getenv('ENV') == 'local':
+        return True
+    
+    secret_key = os.getenv('RECAPTCHA_SECRET_KEY')
+    response = requests.post(f'https://www.google.com/recaptcha/api/siteverify?secret={secret_key}&response={token}')
+    data = response.json()
+    return data.get('success', False)
 
 @retry(stop=stop_after_attempt(5), wait=wait_exponential(multiplier=1))
 async def submit_feedback_with_retry(feedback: FeedbackForm):
@@ -229,6 +241,9 @@ async def get_transaction(request: TransactionRequest, _: str = Depends(authenti
 @app.post("/v1/transaction/simulate")
 async def simulate_transactions(request: SimulateTransactionsRequest, _: str = Depends(authenticate)):
     try:
+        is_human = await verify_recaptcha(request.recaptcha_token)
+        if not is_human:
+            raise HTTPException(status_code=400, detail="Bot detected")
         result = await simulate_txs(request.transactions, request.network, request.force_refresh)
         return {"result": result}
     except HTTPException as e:
@@ -239,6 +254,9 @@ async def simulate_transactions(request: SimulateTransactionsRequest, _: str = D
 @app.post("/v1/transaction/explain")
 async def explain_transactions(request: ExplainTransactionsRequest, _: str = Depends(authenticate)):
     try:
+        is_human = await verify_recaptcha(request.recaptcha_token)
+        if not is_human:
+            raise HTTPException(status_code=400, detail="Bot detected")
         return StreamingResponse(
             explain_txs(request.transactions, request.network, request.system, request.model, request.max_tokens, request.temperature, request.force_refresh),
             media_type="text/plain"
@@ -251,6 +269,10 @@ async def explain_transactions(request: ExplainTransactionsRequest, _: str = Dep
 @app.post("/v1/transaction/fetch_and_simulate")
 async def fetch_and_simulate_transaction(request: TransactionRequest, _: str = Depends(authenticate)):
     try:
+        is_human = await verify_recaptcha(request.recaptcha_token)
+        if not is_human:
+            raise HTTPException(status_code=400, detail="Bot detected")
+
         if not request.network_id:
             raise HTTPException(status_code=400, detail='Missing network ID')
         if not request.tx_hash:
