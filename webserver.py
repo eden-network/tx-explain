@@ -131,6 +131,7 @@ async def verify_recaptcha(token: str) -> bool:
     secret_key = os.getenv('RECAPTCHA_SECRET_KEY')
     response = requests.post(f'https://www.google.com/recaptcha/api/siteverify?secret={secret_key}&response={token}')
     data = response.json()
+    print(data)
     return data.get('success', False)
 
 @retry(stop=stop_after_attempt(5), wait=wait_exponential(multiplier=1))
