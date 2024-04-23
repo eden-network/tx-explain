@@ -1,6 +1,6 @@
 import os
 import time
-import requests
+import aiohttp
 import uvicorn
 import gspread
 import google.auth
@@ -49,6 +49,9 @@ DEFAULT_MODEL = os.getenv('DEFAULT_MODEL')
 DEFAULT_MAX_TOKENS = 2000
 DEFAULT_TEMPERATURE = 0
 DEFAULT_SYSTEM_PROMPT = None
+RECAPTCHA_TIMEOUT = int(os.getenv('RECAPTCHA_TIMEOUT', 3))
+RECAPTCHA_SECRET_KEY = os.getenv('RECAPTCHA_SECRET_KEY', '')
+
 
 with open('system_prompt.txt', 'r') as file:
     DEFAULT_SYSTEM_PROMPT = file.read()
@@ -128,11 +131,15 @@ async def verify_recaptcha(token: str) -> bool:
     if os.getenv('ENV') == 'local':
         return True
     
-    secret_key = os.getenv('RECAPTCHA_SECRET_KEY')
-    response = requests.post(f'https://www.google.com/recaptcha/api/siteverify?secret={secret_key}&response={token}')
-    data = response.json()
-    print(data)
-    return data.get('success', False)
+    async with aiohttp.ClientSession() as session:
+        try:
+            async with session.post(f'https://www.google.com/recaptcha/api/siteverify?secret={RECAPTCHA_SECRET_KEY}&response={token}', timeout=RECAPTCHA_TIMEOUT) as response:
+                data = await response.json()
+                print(data)
+                return data.get('success', False)
+        except aiohttp.ClientError:
+            print("reCAPTCHA request timed out. Proceeding with the request.")
+            return True
 
 @retry(stop=stop_after_attempt(5), wait=wait_exponential(multiplier=1))
 async def submit_feedback_with_retry(feedback: FeedbackForm):
