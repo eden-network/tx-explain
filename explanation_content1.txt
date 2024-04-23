@@ -1,0 +1,15 @@
+Transaction Summary:
+
+This transaction involves swapping WETH for TET tokens on the Uniswap V2 decentralized exchange. The key steps are:
+
+- 5.32 WETH is deposited into the Uniswap router contract from the sender's address.
+- The WETH is transferred to the Uniswap TET/WETH pair contract.
+- A swap is executed on the pair contract, trading the 5.32 WETH for 518.42834682 TET tokens.
+- The 518.42834682 TET tokens are transferred from the pair contract to the sender's address.
+
+Bulleted steps:
+
+- Deposit 5.32 WETH from 0x98d8b33d179ddaba733009f96bbffe7d82f7bda1 into UniversalRouter contract.
+- Transfer 5.32 WETH from UniversalRouter to Uniswap TET/WETH pair contract 0xefdf4dfc4e817197851266acf0082a80dab18b24.
+- Swap 5.32 WETH for 518.42834682 TET on pair contract.
+- Transfer 518.42834682 TET from pair contract to 0x98d8b33d179ddaba733009f96bbffe7d82f7bda1.
