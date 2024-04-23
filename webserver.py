@@ -1,5 +1,6 @@
 import os
 import time
+import requests
 import aiohttp
 import uvicorn
 import gspread
