@@ -4,7 +4,7 @@ google-api-python-client
 google-auth-httplib2 
 google-auth-oauthlib
 python-dotenv==1.0.1
-requests==2.31.0
+requests==2.29.0
 anthropic==0.20.0
 asyncio
 fastapi==0.110.1
@@ -17,7 +17,7 @@ uvloop
 httptools
 gunicorn
 pandas==1.4.1
-pydantic==2.6.4
+pydantic==1.10.9
 pydantic_core==2.16.3
 gspread
 tenacity
