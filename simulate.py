@@ -370,7 +370,7 @@ async def simulate_transaction(tx_hash, block_number, from_address, to_address, 
         trimmed_initial = await extract_useful_fields(sim_data)
         trimmed_decimals = await apply_decimals(trimmed_initial)
         trimmed_logs_applied= await apply_logs(trimmed_decimals)
-        trimmed= await add_labels(trimmed_logs_applied, flipside)
+        trimmed= add_labels(trimmed_logs_applied, flipside)
         try:
             blob = bucket.blob(f'{network}/transactions/simulations/trimmed/{tx_hash}.json')
             blob.upload_from_string(json.dumps(trimmed))

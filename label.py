@@ -44,13 +44,13 @@ def format (addresses):
 def query_flipside (addresses_str, endpoint):
     sql = f"""
         select address,
-               address_name,
-               label,
-               label_type,
-               label_subtype
+            address_name,
+            label,
+            label_type,
+            label_subtype
         from ethereum.core.dim_labels 
         where lower(address) in ({addresses_str})
-    """
+        """
 
     query_result_set = endpoint.query(sql)
     df = pd.DataFrame(query_result_set)
@@ -75,7 +75,6 @@ def to_json(df):
             })
     
         json_object = json.dumps({'address_labels': json_data}, indent=4)
-
         return json_object
     except Exception as e:
         print("Error at to_json: ", e)
@@ -98,7 +97,7 @@ def add_labels(sim_data, endpoint):
         labels_json = json.loads(fetch_address_labels(sim_data, endpoint))
         for key, value in labels_json.items():
             sim_data[key] = value
-
+        
         return sim_data
     except Exception as e:
         print("Error at add_labels: ", e)
