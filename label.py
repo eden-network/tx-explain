@@ -99,8 +99,7 @@ def add_labels(sim_data, endpoint):
         for key, value in labels_json.items():
             sim_data[key] = value
 
-        merged_json = json.dumps(sim_data, indent=4)
-        return merged_json
+        return sim_data
     except Exception as e:
         print("Error at add_labels: ", e)
 
