@@ -9,7 +9,6 @@ from datetime import datetime, timedelta
 from dotenv import load_dotenv
 from web3 import Web3, AsyncWeb3
 import decimal
-from flipside import Flipside
 from label import add_labels
 
 w3 = AsyncWeb3(AsyncWeb3.AsyncHTTPProvider('https://cloudflare-eth.com'))
@@ -330,9 +329,8 @@ async def simulate_transaction(tx_hash, block_number, from_address, to_address, 
     tenderly_account_slug = os.getenv('TENDERLY_ACCOUNT_SLUG')
     tenderly_project_slug = os.getenv('TENDERLY_PROJECT_SLUG')
     tenderly_access_key = os.getenv('TENDERLY_ACCESS_KEY')
-    flipside_api_key = os.getenv('FLIPSIDE_API_KEY')
-    flipside_endpoint_url = os.getenv('FLIPSIDE_ENDPOINT_URL')
-    flipside = Flipside(flipside_api_key, flipside_endpoint_url)
+    labels_dataset = os.getenv('LABELS_BIGQUERY_DATATABLE')
+    ens_dataset = os.getenv('ENS_BIGQUERY_DATATABLE')
 
     tx_details = {
         'network_id': NETWORK_CONFIGS[network]['network_id'],
@@ -370,7 +368,7 @@ async def simulate_transaction(tx_hash, block_number, from_address, to_address, 
         trimmed_initial = await extract_useful_fields(sim_data)
         trimmed_decimals = await apply_decimals(trimmed_initial)
         trimmed_logs_applied= await apply_logs(trimmed_decimals)
-        trimmed= add_labels(trimmed_logs_applied, flipside)
+        trimmed = add_labels(trimmed_logs_applied, labels_dataset, ens_dataset, bigquery_client)
         try:
             blob = bucket.blob(f'{network}/transactions/simulations/trimmed/{tx_hash}.json')
             blob.upload_from_string(json.dumps(trimmed))
