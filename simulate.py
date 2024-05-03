@@ -325,6 +325,22 @@ async def get_cached_simulation(tx_hash, network):
         return json.loads(blob.download_as_string())
     return None
 
+async def reduce_depth(json_obj, max_depth):
+    if not isinstance(json_obj, dict):
+        return json_obj
+
+    if "calls" in json_obj:
+        if max_depth == 0:
+            del json_obj["calls"]
+        else:
+            json_obj["calls"] = [await reduce_depth(call, max_depth - 1) for call in json_obj["calls"]]
+
+    return json_obj
+
+async def truncate_json (json_object,key, max_depth):
+    for item in json_object["call_trace"]:
+        item[key] = [await reduce_depth(element, max_depth) for element in item[key]]
+    return json_object
 
 async def simulate_transaction(tx_hash, block_number, from_address, to_address, gas, value, input_data, tx_index, network):
     tenderly_account_slug = os.getenv('TENDERLY_ACCOUNT_SLUG')
@@ -368,7 +384,8 @@ async def simulate_transaction(tx_hash, block_number, from_address, to_address, 
         except Exception as e:
             logging.error(f'Error uploading full simulation for {tx_hash}: {str(e)}')
         trimmed_initial = await extract_useful_fields(sim_data)
-        trimmed_decimals = await apply_decimals(trimmed_initial)
+        trimmed_truncated = await truncate_json(trimmed_initial, "calls", 1)
+        trimmed_decimals = await apply_decimals(trimmed_truncated)
         trimmed_logs_applied= await apply_logs(trimmed_decimals)
         trimmed= add_labels(trimmed_logs_applied, flipside)
         try:
