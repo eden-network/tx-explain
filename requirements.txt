@@ -5,6 +5,9 @@ google-auth-httplib2
 google-auth-oauthlib
 python-dotenv==1.0.1
 requests==2.29.0
+pandas==1.4.1
+pydantic==1.10.9
+pydantic_core==2.16.3
 anthropic==0.20.0
 asyncio
 aiohttp
@@ -17,9 +20,6 @@ uvicorn==0.13.1
 uvloop
 httptools
 gunicorn
-pandas==1.4.1
-pydantic==1.10.9
-pydantic_core==2.16.3
 gspread
 tenacity
 web3
