@@ -141,6 +141,11 @@ async def verify_recaptcha(token: str) -> bool:
         except aiohttp.ClientError:
             print("reCAPTCHA request timed out. Proceeding with the request.")
             return True
+        
+async def fetch_transaction(url, body):
+    async with aiohttp.ClientSession() as session:
+        async with session.post(url, json=body) as response:
+            return await response.json()
 
 @retry(stop=stop_after_attempt(5), wait=wait_exponential(multiplier=1))
 async def submit_feedback_with_retry(feedback: FeedbackForm):
@@ -311,31 +316,24 @@ async def fetch_and_simulate_transaction(request: TransactionRequest, _: str = D
             "params": [request.tx_hash]
         }
 
-        response = requests.post(url, json=body)
-
-        if response.status_code == 200:
-            resJson = response.json()
-            tx_data = resJson.get('result')
-            if not tx_data or not isinstance(tx_data, dict) or not tx_data.get('blockNumber'):
-                raise HTTPException(status_code=404, detail='Transaction not found')
-
-            transaction = Transaction(
-                hash=tx_data["hash"],
-                block_number=int(tx_data["blockNumber"], 16),
-                from_address=tx_data["from"],
-                to_address=tx_data["to"],
-                gas=int(tx_data["gas"], 16),
-                value=str(int(tx_data["value"], 16)),
-                input=tx_data["input"],
-                transaction_index=int(tx_data["transactionIndex"], 16)
-            )
-            result = await simulate_txs([transaction], network_name, True)
-
-            return {"result": result[0]}
-        elif response.status_code == 404:
+        resJson = await fetch_transaction(url, body)
+        tx_data = resJson.get('result')
+        if not tx_data or not isinstance(tx_data, dict) or not tx_data.get('blockNumber'):
             raise HTTPException(status_code=404, detail='Transaction not found')
-        else:
-            raise HTTPException(status_code=500, detail='Error fetching transaction')
+
+        transaction = Transaction(
+            hash=tx_data["hash"],
+            block_number=int(tx_data["blockNumber"], 16),
+            from_address=tx_data["from"],
+            to_address=tx_data["to"],
+            gas=int(tx_data["gas"], 16),
+            value=str(int(tx_data["value"], 16)),
+            input=tx_data["input"],
+            transaction_index=int(tx_data["transactionIndex"], 16)
+        )
+        result = await simulate_txs([transaction], network_name, True)
+
+        return {"result": result[0]}
 
     except HTTPException as e:
         raise e

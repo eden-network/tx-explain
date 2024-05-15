@@ -1,13 +1,13 @@
 import os
 import json
 import asyncio
-import requests
+import aiohttp
 import argparse
 import logging
 from google.cloud import bigquery, storage
 from datetime import datetime, timedelta
 from dotenv import load_dotenv
-from web3 import Web3, AsyncWeb3
+from web3 import AsyncWeb3
 import decimal
 from flipside import Flipside
 from label import add_labels
@@ -161,7 +161,7 @@ async def query_transactions(start_day, end_day, start_block, end_block, network
     logging.info(f"Job {query_job.job_id} started.")
     return list(query_job)
 
-async def clean_calltrace(calltrace):
+async def clean_calltrace(calltrace, depth=0):
     traces = []
     for call in calltrace:
         trace = {
@@ -174,6 +174,15 @@ async def clean_calltrace(calltrace):
             'output': call.get('output', ''),
             'value': call.get('value', ''),
         }
+
+        if trace["function"]=="approve":
+            token_address=w3.to_checksum_address(call["to"])
+            abi='[ { "inputs":[ ], "name":"decimals", "outputs":[ { "internalType":"uint8", "name":"", "type":"uint8" } ], "stateMutability":"view", "type":"function" } ]'
+            contract = w3.eth.contract(address=token_address, abi=abi)
+            try:
+                trace['decimals'] = await contract.functions.decimals().call()                
+            except:
+                logging.info("Web3 call failed: " + str(token_address))
         if 'error' in call:
             trace['error'] = call.get('error', '')
         if 'caller' in call:
@@ -182,10 +191,15 @@ async def clean_calltrace(calltrace):
         if 'decoded_input' in call and call['decoded_input']:
             decoded_inputs = []
             for input_data in call['decoded_input']:
+                input_name = input_data['soltype'].get('name', ''),
+                input_type = input_data['soltype'].get('type', ''),
+                input_value = input_data.get('value', '')
+                if input_value and call['decimals'] and int(call['decimals']) > 0:
+                    input_value = str(int(input_value) / 10**int(call['decimals']))
                 decoded_inputs.append({
-                    'name': input_data['soltype'].get('name', ''),
-                    'type': input_data['soltype'].get('type', ''),
-                    'value': input_data.get('value', ''),
+                    'name': input_name,
+                    'type': input_type,
+                    'value': input_value,
                 })
             trace['decoded_input'] = decoded_inputs
         if 'decoded_output' in call and call['decoded_output']:
@@ -198,8 +212,8 @@ async def clean_calltrace(calltrace):
                 })
             trace['decoded_output'] = decoded_outputs
         subcalls = call.get('calls', [])
-        if subcalls:
-            trace['calls'] = await clean_calltrace(subcalls)
+        if subcalls and depth < 2:
+            trace['calls'] = await clean_calltrace(subcalls, depth + 1)
         traces.append(trace)
     return traces
 
@@ -243,25 +257,6 @@ async def extract_useful_fields(sim_data):
                 },
             }
             result['asset_changes'].append(asset_change_summary)
-    return result
-
-async def apply_decimals(sim_data):
-    result=sim_data
-    logging.info("Applying decimals on edge cases")
-    for call in result['call_trace']:
-        if (call["function"]=="approve"):
-            #if the call trace is approve, apply decimals directlly on the amount as there is no asset_change object
-            logging.info("FOUND AN APPROVAL TRANSACTION AND APPLYING DECIMALS")
-            token_address=w3.to_checksum_address(call["to"])
-            abi='[ { "inputs":[ ], "name":"decimals", "outputs":[ { "internalType":"uint8", "name":"", "type":"uint8" } ], "stateMutability":"view", "type":"function" } ]'
-            contract = w3.eth.contract(address=token_address, abi=abi)
-            try:
-                token_decimals= await contract.functions.decimals().call()
-                for decoded_input in call["decoded_input"]:
-                    if decoded_input["name"]=="amount" or decoded_input["name"]=="_value":
-                        decoded_input["value"]=int(decoded_input["value"])/10**token_decimals
-            except:
-                logging.info("Web3 call failed: " + str(token_address))
     return result
 
 async def apply_logs(sim_data):
@@ -319,12 +314,20 @@ async def apply_logs(sim_data):
     except :
         logging.error ("Error in web3 call - logs: " + str(tx_hash) )
     return result
+
 async def get_cached_simulation(tx_hash, network):
     blob = bucket.blob(f'{network}/transactions/simulations/trimmed/{tx_hash}.json')
     if blob.exists():
         return json.loads(blob.download_as_string())
     return None
 
+async def fetch_tenderly_simulation(tx_details, tenderly_account_slug, tenderly_project_slug, tenderly_access_key, session):
+    async with session.post(
+        f'https://api.tenderly.co/api/v1/account/{tenderly_account_slug}/project/{tenderly_project_slug}/simulate',
+        json=tx_details,
+        headers={'X-Access-Key': tenderly_access_key}
+    ) as response:
+        return await response.json()
 
 async def simulate_transaction(tx_hash, block_number, from_address, to_address, gas, value, input_data, tx_index, network):
     tenderly_account_slug = os.getenv('TENDERLY_ACCOUNT_SLUG')
@@ -347,37 +350,32 @@ async def simulate_transaction(tx_hash, block_number, from_address, to_address, 
         'generate_access_list': True,
     }
 
-    logging.info(f'Simulating transaction: {tx_hash}')
-    response = requests.post(
-        f'https://api.tenderly.co/api/v1/account/{tenderly_account_slug}/project/{tenderly_project_slug}/simulate',
-        json=tx_details,
-        headers={'X-Access-Key': tenderly_access_key},
-    )
-
-    sim_data = response.json()
-    if sim_data and 'transaction' in sim_data:
-        sim_data['transaction']['hash'] = tx_hash
-        if 'transaction_info' in sim_data['transaction']:
-            sim_data['transaction']['transaction_info']['transaction_id'] = tx_hash
-            if 'call_trace' in sim_data['transaction']['transaction_info']:
-                sim_data['transaction']['transaction_info']['call_trace']['hash'] = tx_hash
-        try:
-            blob = bucket.blob(f'{network}/transactions/simulations/full/{tx_hash}.json')
-            blob.upload_from_string(json.dumps(sim_data))
-            logging.info(f'{tx_hash} full simulation written successfully to bucket')
-        except Exception as e:
-            logging.error(f'Error uploading full simulation for {tx_hash}: {str(e)}')
-        trimmed_initial = await extract_useful_fields(sim_data)
-        trimmed_decimals = await apply_decimals(trimmed_initial)
-        trimmed_logs_applied= await apply_logs(trimmed_decimals)
-        trimmed= add_labels(trimmed_logs_applied, flipside)
-        try:
-            blob = bucket.blob(f'{network}/transactions/simulations/trimmed/{tx_hash}.json')
-            blob.upload_from_string(json.dumps(trimmed))
-            logging.info(f'{tx_hash} trimmed simulation written successfully to bucket')
-        except Exception as e:
-            logging.error(f'Error uploading trimmed simulation for {tx_hash}: {str(e)}')
-        return trimmed
+    async with aiohttp.ClientSession() as session:
+        logging.info(f'Simulating transaction: {tx_hash}')
+        sim_data = await fetch_tenderly_simulation(tx_details, tenderly_account_slug, tenderly_project_slug, tenderly_access_key, session)
+        if sim_data and 'transaction' in sim_data:
+            sim_data['transaction']['hash'] = tx_hash
+            if 'transaction_info' in sim_data['transaction']:
+                sim_data['transaction']['transaction_info']['transaction_id'] = tx_hash
+                if 'call_trace' in sim_data['transaction']['transaction_info']:
+                    sim_data['transaction']['transaction_info']['call_trace']['hash'] = tx_hash
+            try:
+                blob = bucket.blob(f'{network}/transactions/simulations/full/{tx_hash}.json')
+                blob.upload_from_string(json.dumps(sim_data))
+                logging.info(f'{tx_hash} full simulation written successfully to bucket')
+            except Exception as e:
+                logging.error(f'Error uploading full simulation for {tx_hash}: {str(e)}')
+            trimmed = await extract_useful_fields(sim_data)
+            # trimmed_logs_applied = await apply_logs(trimmed_decimals)
+            # trimmed = add_labels(trimmed_logs_applied, flipside)
+            # trimmed = add_labels(trimmed_initial, flipside)
+            try:
+                blob = bucket.blob(f'{network}/transactions/simulations/trimmed/{tx_hash}.json')
+                blob.upload_from_string(json.dumps(trimmed))
+                logging.info(f'{tx_hash} trimmed simulation written successfully to bucket')
+            except Exception as e:
+                logging.error(f'Error uploading trimmed simulation for {tx_hash}: {str(e)}')
+            return trimmed
     return None
 async def main(start_day, end_day, network):
     block_ranges = await get_block_ranges_for_date_range(start_day, end_day, network)
