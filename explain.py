@@ -5,6 +5,7 @@ import argparse
 from datetime import datetime
 from dotenv import load_dotenv
 from anthropic import AsyncAnthropic
+from groq import AsyncGroq
 from google.cloud import storage
 
 load_dotenv()  # Load environment variables from .env file
@@ -44,34 +45,64 @@ async def get_cached_explanation(tx_hash, network):
     return None
 
 async def explain_transaction(client, payload, network='ethereum', system_prompt=None, model="claude-3-haiku-20240307", max_tokens=2000, temperature=0):
-    request_params = {
-        'model': model,
-        'max_tokens': max_tokens,
-        'temperature': temperature,
-        'messages': [
-            {
-                "role": "user",
-                "content": [
-                    {
-                        "type": "text",
-                        "text": json.dumps(payload)
-                    }
-                ]
-            }
-        ]
-    }
+    if model=="llama3-70b-8192":
+        explanation=""
+        try:
+            chat_completion = await client.chat.completions.create(
+                messages=[
+                {
+                    "role": "system",
+                    "content": system_prompt    
+                },
+                {
+                    "role": "user",
+                    "content":  json.dumps(payload)
+                }
+                    ],
+                    model=model,
+                    temperature=temperature,
+                    max_tokens=max_tokens
+            )
+            explanation=chat_completion.choices[0].message.content
+        except Exception as e:
+            print(f"Error streaming explanation: {str(e)}")
+    tx_hash = payload['hash']
+    if explanation and explanation != "" and tx_hash:
+        try:
+            await write_explanation_to_bucket(network, tx_hash, explanation, model)
+        except Exception as e:
+            print(f'Error uploading explanation for {tx_hash}: {str(e)}')
+        
 
-    if system_prompt:
-        request_params['system'] = system_prompt
+    else:
+        request_params = {
+            'model': model,
+            'max_tokens': max_tokens,
+            'temperature': temperature,
+            'messages': [
+                {
+                    "role": "user",
+                    "content": [
+                        {
+                            "type": "text",
+                            "text": json.dumps(payload)
+                        }
+                    ]
+                }
+            ]
+        }
 
-    explanation = ""
-    try:
-        async with client.messages.stream(**request_params) as stream:
-            async for word in stream.text_stream:
-                yield word
-                explanation += word
-    except Exception as e:
-        print(f"Error streaming explanation: {str(e)}")
+        if system_prompt:
+            request_params['system'] = system_prompt
+
+        explanation = ""
+        try:
+            async with client.messages.stream(**request_params) as stream:
+                async for word in stream.text_stream:
+                    yield word
+                    explanation += word
+        except Exception as e:
+            print(f"Error streaming explanation: {str(e)}")
     tx_hash = payload['hash']
     if explanation and explanation != "" and tx_hash:
         try:
@@ -85,11 +116,11 @@ async def write_explanation_to_bucket(network, tx_hash, explanation, model):
     updated_at = datetime.now().isoformat()
     blob.upload_from_string(json.dumps({'result': explanation, 'model': model, 'updated_at': updated_at}))
 
-async def process_json_file(anthropic_client, file_path, data, network, semaphore, delay_time, system_prompt, model):
+async def process_json_file(async_client, file_path, data, network, semaphore, delay_time, system_prompt, model):
     async with semaphore:
         print(f'Analyzing: {file_path}...')
         explanation = ""
-        async for item in explain_transaction(anthropic_client, data, network=network, system_prompt=system_prompt, model=model):
+        async for item in explain_transaction(async_client, data, network=network, system_prompt=system_prompt, model=model):
             explanation += item
         if explanation and explanation != "":
             tx_hash = data['hash']
@@ -111,11 +142,16 @@ async def main(network, delay_time, max_concurrent_connections, skip_function_ca
     
     api_key = os.getenv('ANTHROPIC_API_KEY')
     anthropic_client = AsyncAnthropic(api_key=api_key)
+    api_key_groq = os.getenv('GROQ_API_KEY')
+    groq_client = AsyncGroq(api_key=api_key_groq)
     semaphore = asyncio.Semaphore(max_concurrent_connections)
     
     tasks = []
     for file_path, data in json_data:
-        task = asyncio.create_task(process_json_file(anthropic_client, file_path, data, network, semaphore, delay_time, system_prompt, model))
+        if model=="llama3-70b-8192":
+            task = asyncio.create_task(process_json_file(groq_client, file_path, data, network, semaphore, delay_time, system_prompt, model))
+        else:
+            task = asyncio.create_task(process_json_file(anthropic_client, file_path, data, network, semaphore, delay_time, system_prompt, model))
         tasks.append(task)
     
     await asyncio.gather(*tasks)
