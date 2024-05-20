@@ -1,14 +1,21 @@
 import os
 import json
 import asyncio
-import requests
+import aiohttp
 import argparse
+import logging
 from google.cloud import bigquery, storage
 from datetime import datetime, timedelta
 from dotenv import load_dotenv
+from web3 import AsyncWeb3
+import decimal
+from flipside import Flipside
+from label import add_labels
 
+w3 = AsyncWeb3(AsyncWeb3.AsyncHTTPProvider('https://cloudflare-eth.com'))
 load_dotenv()
 
+logging.getLogger().setLevel(logging.INFO)
 bucket_name = os.getenv('GCS_BUCKET_NAME')
 
 bigquery_client = bigquery.Client()
@@ -122,7 +129,7 @@ async def get_block_ranges_for_date_range(start_day, end_day, network):
         ORDER BY day
     """
     query_job = bigquery_client.query(query)
-    print(f"Job {query_job.job_id} started.")
+    logging.info(f"Job {query_job.job_id} started.")
     block_ranges = {}
     for row in query_job:
         block_ranges[row['day']] = {
@@ -151,10 +158,10 @@ async def query_transactions(start_day, end_day, start_block, end_block, network
             AND block_number <= {end_block}
     """
     query_job = bigquery_client.query(query)
-    print(f"Job {query_job.job_id} started.")
+    logging.info(f"Job {query_job.job_id} started.")
     return list(query_job)
 
-async def clean_calltrace(calltrace):
+async def clean_calltrace(calltrace, depth=0):
     traces = []
     for call in calltrace:
         trace = {
@@ -167,18 +174,33 @@ async def clean_calltrace(calltrace):
             'output': call.get('output', ''),
             'value': call.get('value', ''),
         }
+
+        if trace["function"]=="approve":
+            token_address=w3.to_checksum_address(call["to"])
+            abi='[ { "inputs":[ ], "name":"decimals", "outputs":[ { "internalType":"uint8", "name":"", "type":"uint8" } ], "stateMutability":"view", "type":"function" } ]'
+            contract = w3.eth.contract(address=token_address, abi=abi)
+            try:
+                trace['decimals'] = await contract.functions.decimals().call()                
+            except:
+                logging.info("Web3 call failed: " + str(token_address))
         if 'error' in call:
             trace['error'] = call.get('error', '')
         if 'caller' in call:
             trace['caller'] = call['caller'].get('address', '')
             trace['caller_balance'] = call['caller'].get('balance', '')
-        if 'decoded_input' in call and call['decoded_input']:
+        if 'decoded_input' in call:
             decoded_inputs = []
             for input_data in call['decoded_input']:
+                input_name = input_data['soltype'].get('name', ''),
+                input_type = input_data['soltype'].get('type', ''),
+                input_value = input_data.get('value', '')
+                decimals = trace.get('decimals')
+                if input_value and decimals and int(decimals) > 0 and (input_name=="amount" or input_name=="_value"):
+                    input_value = str(int(input_value) / 10**int(decimals))
                 decoded_inputs.append({
-                    'name': input_data['soltype'].get('name', ''),
-                    'type': input_data['soltype'].get('type', ''),
-                    'value': input_data.get('value', ''),
+                    'name': input_name,
+                    'type': input_type,
+                    'value': input_value,
                 })
             trace['decoded_input'] = decoded_inputs
         if 'decoded_output' in call and call['decoded_output']:
@@ -191,8 +213,8 @@ async def clean_calltrace(calltrace):
                 })
             trace['decoded_output'] = decoded_outputs
         subcalls = call.get('calls', [])
-        if subcalls:
-            trace['calls'] = await clean_calltrace(subcalls)
+        if subcalls and depth < 2:
+            trace['calls'] = await clean_calltrace(subcalls, depth + 1)
         traces.append(trace)
     return traces
 
@@ -238,16 +260,83 @@ async def extract_useful_fields(sim_data):
             result['asset_changes'].append(asset_change_summary)
     return result
 
+async def apply_logs(sim_data):
+    result=sim_data
+    logging.info("Applying logs for edge cases")
+    try:
+        transfers=[]
+        tokens={}
+        tx_hash=sim_data["hash"]
+        receipt= await w3.eth.get_transaction_receipt(tx_hash)
+        logs=receipt["logs"]
+        for log in logs:
+            topic0=log["topics"][0].hex()
+            if topic0=="0xddf252ad1be2c89b69c2b068fc378daa952ba7f163c4a11628f55a4df523b3ef":
+                transfer_from="0x"+w3.to_hex(log["topics"][1])[26:]
+                transfer_to="0x"+w3.to_hex(log["topics"][2])[26:]
+                transfer_amount=w3.to_int(log["data"])
+                token_address=log["address"]
+                if token_address not in tokens:
+                    token_address_contract=w3.to_checksum_address(token_address)
+                    abi='[{"constant": true,"inputs": [],"name": "name","outputs": [{"name": "","type": "string"}],"payable": false,"stateMutability": "view","type": "function"},{"constant": false,"inputs": [{"name": "_spender","type": "address"},{"name": "_value","type": "uint256"}],"name": "approve","outputs": [{"name": "","type": "bool"}],"payable": false,"stateMutability": "nonpayable","type": "function"},{"constant": true,"inputs": [],"name": "totalSupply","outputs": [{"name": "","type": "uint256"}],"payable": false,"stateMutability": "view","type": "function"},{"constant": false,"inputs": [{"name": "_from","type": "address"},{"name": "_to","type": "address"},{"name": "_value","type": "uint256"}],"name": "transferFrom","outputs": [{"name": "","type": "bool"}],"payable": false,"stateMutability": "nonpayable","type": "function"},{"constant": true,"inputs": [],"name": "decimals","outputs": [{"name": "","type": "uint8"}],"payable": false,"stateMutability": "view","type": "function"},{"constant": true,"inputs": [{"name": "_owner","type": "address"}],"name": "balanceOf","outputs": [{"name": "balance","type": "uint256"}],"payable": false,"stateMutability": "view","type": "function"},{"constant": true,"inputs": [],"name": "symbol","outputs": [{"name": "","type": "string"}],"payable": false,"stateMutability": "view","type": "function"},{"constant": false,"inputs": [{"name": "_to","type": "address"},{"name": "_value","type": "uint256"}],"name": "transfer","outputs": [{"name": "","type": "bool"}],"payable": false,"stateMutability": "nonpayable","type": "function"},{"constant": true,"inputs": [{"name": "_owner","type": "address"},{"name": "_spender","type": "address"}],"name": "allowance","outputs": [{"name": "","type": "uint256"}],"payable": false,"stateMutability": "view","type": "function"},{"payable": true,"stateMutability": "payable","type": "fallback"},{"anonymous": false,"inputs": [{"indexed": true,"name": "owner","type": "address"},{"indexed": true,"name": "spender","type": "address"},{"indexed": false,"name": "value","type": "uint256"}],"name": "Approval","type": "event"},{"anonymous": false,"inputs": [{"indexed": true,"name": "from","type": "address"},{"indexed": true,"name": "to","type": "address"},{"indexed": false,"name": "value","type": "uint256"}],"name": "Transfer","type": "event"}]'
+                    contract = w3.eth.contract(address=token_address_contract, abi=abi)
+                    token_decimals= await contract.functions.decimals().call()
+                    token_name= await contract.functions.name().call()
+                    token_symbol= await contract.functions.symbol().call()
+                    token_obj={
+                        "name": token_name,
+                        "symbol" : token_symbol,
+                        "decimals" : int(token_decimals)
+                    }
+                    tokens[token_address]=token_obj
+                transfer_obj={
+                    "token_address": token_address,
+                    "from" : transfer_from,
+                    "to" : transfer_to,
+                    "amount" : decimal.Decimal(transfer_amount)/decimal.Decimal(10**tokens[token_address]["decimals"]),
+                    "token_name" : tokens[token_address]["name"],
+                    "token_symbol" : tokens[token_address]["symbol"],
+                    "token_decimals" : tokens[token_address]["decimals"]
+                }
+                transfers.append(transfer_obj)
+
+        for asset_change in result["asset_changes"]:
+            if asset_change["amount"] is None:
+                token_address=asset_change["token_info"]["contract_address"]
+                transfer_from=asset_change["from"]
+                transfer_to=asset_change["to"]
+                for transfer in transfers:
+                    if (transfer["from"]==transfer_from and transfer["to"]==transfer_to and transfer["token_address"].lower()==token_address.lower()):
+                        asset_change["amount"]=str(transfer["amount"])
+                        asset_change["token_info"]["symbol"]=transfer["token_symbol"]
+                        asset_change["token_info"]["name"]=transfer["token_name"]
+                        asset_change["token_info"]["decimals"]=transfer["token_decimals"]    
+                        asset_change["token_info"]["type"]="Fungible"
+    except :
+        logging.error ("Error in web3 call - logs: " + str(tx_hash) )
+    return result
+
 async def get_cached_simulation(tx_hash, network):
     blob = bucket.blob(f'{network}/transactions/simulations/trimmed/{tx_hash}.json')
     if blob.exists():
         return json.loads(blob.download_as_string())
     return None
 
+async def fetch_tenderly_simulation(tx_details, tenderly_account_slug, tenderly_project_slug, tenderly_access_key, session):
+    async with session.post(
+        f'https://api.tenderly.co/api/v1/account/{tenderly_account_slug}/project/{tenderly_project_slug}/simulate',
+        json=tx_details,
+        headers={'X-Access-Key': tenderly_access_key}
+    ) as response:
+        return await response.json()
+
 async def simulate_transaction(tx_hash, block_number, from_address, to_address, gas, value, input_data, tx_index, network):
     tenderly_account_slug = os.getenv('TENDERLY_ACCOUNT_SLUG')
     tenderly_project_slug = os.getenv('TENDERLY_PROJECT_SLUG')
     tenderly_access_key = os.getenv('TENDERLY_ACCESS_KEY')
+    flipside_api_key = os.getenv('FLIPSIDE_API_KEY')
+    flipside_endpoint_url = os.getenv('FLIPSIDE_ENDPOINT_URL')
+    flipside = Flipside(flipside_api_key, flipside_endpoint_url)
 
     tx_details = {
         'network_id': NETWORK_CONFIGS[network]['network_id'],
@@ -262,35 +351,32 @@ async def simulate_transaction(tx_hash, block_number, from_address, to_address, 
         'generate_access_list': True,
     }
 
-    print(f'Simulating transaction: {tx_hash}')
-    response = requests.post(
-        f'https://api.tenderly.co/api/v1/account/{tenderly_account_slug}/project/{tenderly_project_slug}/simulate',
-        json=tx_details,
-        headers={'X-Access-Key': tenderly_access_key},
-    )
-
-    sim_data = response.json()
-    if sim_data and 'transaction' in sim_data:
-        sim_data['transaction']['hash'] = tx_hash
-        if 'transaction_info' in sim_data['transaction']:
-            sim_data['transaction']['transaction_info']['transaction_id'] = tx_hash
-            if 'call_trace' in sim_data['transaction']['transaction_info']:
-                sim_data['transaction']['transaction_info']['call_trace']['hash'] = tx_hash
-        try:
-            blob = bucket.blob(f'{network}/transactions/simulations/full/{tx_hash}.json')
-            blob.upload_from_string(json.dumps(sim_data))
-            print(f'{tx_hash} full simulation written successfully to bucket')
-        except Exception as e:
-            print(f'Error uploading full simulation for {tx_hash}: {str(e)}')
-        
-        trimmed = await extract_useful_fields(sim_data)
-        try:
-            blob = bucket.blob(f'{network}/transactions/simulations/trimmed/{tx_hash}.json')
-            blob.upload_from_string(json.dumps(trimmed))
-            print(f'{tx_hash} trimmed simulation written successfully to bucket')
-        except Exception as e:
-            print(f'Error uploading trimmed simulation for {tx_hash}: {str(e)}')
-        return trimmed
+    async with aiohttp.ClientSession() as session:
+        logging.info(f'Simulating transaction: {tx_hash}')
+        sim_data = await fetch_tenderly_simulation(tx_details, tenderly_account_slug, tenderly_project_slug, tenderly_access_key, session)
+        if sim_data and 'transaction' in sim_data:
+            sim_data['transaction']['hash'] = tx_hash
+            if 'transaction_info' in sim_data['transaction']:
+                sim_data['transaction']['transaction_info']['transaction_id'] = tx_hash
+                if 'call_trace' in sim_data['transaction']['transaction_info']:
+                    sim_data['transaction']['transaction_info']['call_trace']['hash'] = tx_hash
+            try:
+                blob = bucket.blob(f'{network}/transactions/simulations/full/{tx_hash}.json')
+                blob.upload_from_string(json.dumps(sim_data))
+                logging.info(f'{tx_hash} full simulation written successfully to bucket')
+            except Exception as e:
+                logging.error(f'Error uploading full simulation for {tx_hash}: {str(e)}')
+            trimmed = await extract_useful_fields(sim_data)
+            # trimmed_logs_applied = await apply_logs(trimmed_decimals)
+            # trimmed = add_labels(trimmed_logs_applied, flipside)
+            # trimmed = add_labels(trimmed_initial, flipside)
+            try:
+                blob = bucket.blob(f'{network}/transactions/simulations/trimmed/{tx_hash}.json')
+                blob.upload_from_string(json.dumps(trimmed))
+                logging.info(f'{tx_hash} trimmed simulation written successfully to bucket')
+            except Exception as e:
+                logging.error(f'Error uploading trimmed simulation for {tx_hash}: {str(e)}')
+            return trimmed
     return None
 async def main(start_day, end_day, network):
     block_ranges = await get_block_ranges_for_date_range(start_day, end_day, network)
@@ -305,7 +391,7 @@ async def main(start_day, end_day, network):
         day_block_range = block_ranges[day]
         block_number = day_block_range['start']
         while block_number <= day_block_range['end']:
-            print(f"{day}: Querying transactions for block range {block_number} - {block_number + 1000}")
+            logging.info(f"{day}: Querying transactions for block range {block_number} - {block_number + 1000}")
             transactions = await query_transactions(day, next_day, block_number, block_number + 1000, network)
             for tx in transactions:
                 await simulate_transaction(

@@ -1,10 +1,12 @@
 import os
 import time
 import requests
+import aiohttp
 import uvicorn
 import gspread
 import google.auth
 from fastapi import FastAPI, Depends, HTTPException, Request
+from fastapi.staticfiles import StaticFiles
 from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse, StreamingResponse
@@ -20,6 +22,7 @@ from tenacity import retry, stop_after_attempt, wait_exponential
 load_dotenv()
 
 app = FastAPI()
+app.mount("/static", StaticFiles(directory="static"), name="static")
 origins = ["*"]
 CORS_ALLOWED_ORIGINS = os.getenv('CORS_ALLOWED_ORIGINS')
 if CORS_ALLOWED_ORIGINS:
@@ -47,6 +50,9 @@ DEFAULT_MODEL = os.getenv('DEFAULT_MODEL')
 DEFAULT_MAX_TOKENS = 2000
 DEFAULT_TEMPERATURE = 0
 DEFAULT_SYSTEM_PROMPT = None
+RECAPTCHA_TIMEOUT = int(os.getenv('RECAPTCHA_TIMEOUT', 3))
+RECAPTCHA_SECRET_KEY = os.getenv('RECAPTCHA_SECRET_KEY', '')
+
 
 with open('system_prompt.txt', 'r') as file:
     DEFAULT_SYSTEM_PROMPT = file.read()
@@ -69,11 +75,13 @@ class TransactionRequest(BaseModel):
     max_tokens: int = DEFAULT_MAX_TOKENS
     temperature: float = DEFAULT_TEMPERATURE
     force_refresh: bool = False
+    recaptcha_token: str
 
 class SimulateTransactionsRequest(BaseModel):
     transactions: list[Transaction]
     network: str = 'ethereum'
     force_refresh: bool = False
+    recaptcha_token: str
 
 class ExplainTransactionsRequest(BaseModel):
     transactions: list[Any]
@@ -83,6 +91,7 @@ class ExplainTransactionsRequest(BaseModel):
     max_tokens: int = DEFAULT_MAX_TOKENS
     temperature: float = DEFAULT_TEMPERATURE
     force_refresh: bool = False
+    recaptcha_token: str
 
 class FeedbackForm(BaseModel):
     date: str
@@ -118,6 +127,25 @@ async def authenticate(authorization: HTTPAuthorizationCredentials = Depends(aut
     if token != os.getenv('API_TOKEN'):
         raise HTTPException(status_code=401, detail="Invalid token")
     return token
+
+async def verify_recaptcha(token: str) -> bool:
+    if os.getenv('ENV') == 'local':
+        return True
+    
+    async with aiohttp.ClientSession() as session:
+        try:
+            async with session.post(f'https://www.google.com/recaptcha/api/siteverify?secret={RECAPTCHA_SECRET_KEY}&response={token}', timeout=RECAPTCHA_TIMEOUT) as response:
+                data = await response.json()
+                print(data)
+                return data.get('success', False)
+        except aiohttp.ClientError:
+            print("reCAPTCHA request timed out. Proceeding with the request.")
+            return True
+        
+async def fetch_transaction(url, body):
+    async with aiohttp.ClientSession() as session:
+        async with session.post(url, json=body) as response:
+            return await response.json()
 
 @retry(stop=stop_after_attempt(5), wait=wait_exponential(multiplier=1))
 async def submit_feedback_with_retry(feedback: FeedbackForm):
@@ -229,6 +257,9 @@ async def get_transaction(request: TransactionRequest, _: str = Depends(authenti
 @app.post("/v1/transaction/simulate")
 async def simulate_transactions(request: SimulateTransactionsRequest, _: str = Depends(authenticate)):
     try:
+        is_human = await verify_recaptcha(request.recaptcha_token)
+        if not is_human:
+            raise HTTPException(status_code=400, detail="Bot detected")
         result = await simulate_txs(request.transactions, request.network, request.force_refresh)
         return {"result": result}
     except HTTPException as e:
@@ -239,6 +270,9 @@ async def simulate_transactions(request: SimulateTransactionsRequest, _: str = D
 @app.post("/v1/transaction/explain")
 async def explain_transactions(request: ExplainTransactionsRequest, _: str = Depends(authenticate)):
     try:
+        is_human = await verify_recaptcha(request.recaptcha_token)
+        if not is_human:
+            raise HTTPException(status_code=400, detail="Bot detected")
         return StreamingResponse(
             explain_txs(request.transactions, request.network, request.system, request.model, request.max_tokens, request.temperature, request.force_refresh),
             media_type="text/plain"
@@ -251,6 +285,10 @@ async def explain_transactions(request: ExplainTransactionsRequest, _: str = Dep
 @app.post("/v1/transaction/fetch_and_simulate")
 async def fetch_and_simulate_transaction(request: TransactionRequest, _: str = Depends(authenticate)):
     try:
+        is_human = await verify_recaptcha(request.recaptcha_token)
+        if not is_human:
+            raise HTTPException(status_code=400, detail="Bot detected")
+
         if not request.network_id:
             raise HTTPException(status_code=400, detail='Missing network ID')
         if not request.tx_hash:
@@ -278,31 +316,24 @@ async def fetch_and_simulate_transaction(request: TransactionRequest, _: str = D
             "params": [request.tx_hash]
         }
 
-        response = requests.post(url, json=body)
-
-        if response.status_code == 200:
-            resJson = response.json()
-            tx_data = resJson.get('result')
-            if not tx_data or not isinstance(tx_data, dict) or not tx_data.get('blockNumber'):
-                raise HTTPException(status_code=404, detail='Transaction not found')
-
-            transaction = Transaction(
-                hash=tx_data["hash"],
-                block_number=int(tx_data["blockNumber"], 16),
-                from_address=tx_data["from"],
-                to_address=tx_data["to"],
-                gas=int(tx_data["gas"], 16),
-                value=str(int(tx_data["value"], 16)),
-                input=tx_data["input"],
-                transaction_index=int(tx_data["transactionIndex"], 16)
-            )
-            result = await simulate_txs([transaction], network_name, True)
-
-            return {"result": result[0]}
-        elif response.status_code == 404:
+        resJson = await fetch_transaction(url, body)
+        tx_data = resJson.get('result')
+        if not tx_data or not isinstance(tx_data, dict) or not tx_data.get('blockNumber'):
             raise HTTPException(status_code=404, detail='Transaction not found')
-        else:
-            raise HTTPException(status_code=500, detail='Error fetching transaction')
+
+        transaction = Transaction(
+            hash=tx_data["hash"],
+            block_number=int(tx_data["blockNumber"], 16),
+            from_address=tx_data["from"],
+            to_address=tx_data["to"],
+            gas=int(tx_data["gas"], 16),
+            value=str(int(tx_data["value"], 16)),
+            input=tx_data["input"],
+            transaction_index=int(tx_data["transactionIndex"], 16)
+        )
+        result = await simulate_txs([transaction], network_name, True)
+
+        return {"result": result[0]}
 
     except HTTPException as e:
         raise e
