@@ -195,7 +195,7 @@ async def clean_calltrace(calltrace, depth=0):
                 input_type = input_data['soltype'].get('type', ''),
                 input_value = input_data.get('value', '')
                 decimals = trace.get('decimals')
-                if input_value and decimals and int(decimals) > 0:
+                if input_value and decimals and int(decimals) > 0 and (input_name=="amount" or input_name=="_value"):
                     input_value = str(int(input_value) / 10**int(decimals))
                 decoded_inputs.append({
                     'name': input_name,
