@@ -188,14 +188,15 @@ async def clean_calltrace(calltrace, depth=0):
         if 'caller' in call:
             trace['caller'] = call['caller'].get('address', '')
             trace['caller_balance'] = call['caller'].get('balance', '')
-        if 'decoded_input' in call and call['decoded_input']:
+        if 'decoded_input' in call:
             decoded_inputs = []
             for input_data in call['decoded_input']:
                 input_name = input_data['soltype'].get('name', ''),
                 input_type = input_data['soltype'].get('type', ''),
                 input_value = input_data.get('value', '')
-                if input_value and call['decimals'] and int(call['decimals']) > 0:
-                    input_value = str(int(input_value) / 10**int(call['decimals']))
+                decimals = trace.get('decimals')
+                if input_value and decimals and int(decimals) > 0:
+                    input_value = str(int(input_value) / 10**int(decimals))
                 decoded_inputs.append({
                     'name': input_name,
                     'type': input_type,
