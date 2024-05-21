@@ -343,7 +343,6 @@ async def fetch_and_simulate_transaction(request: TransactionRequest, _: str = D
 @app.post("/v1/feedback")
 async def submit_feedback(feedback: FeedbackForm):
     try:
-        print({"Submitting feedback": feedback.model_dump_json()})
         await submit_feedback_with_retry(feedback)
         return {"message": "Feedback submitted successfully"}
     except Exception as e:
