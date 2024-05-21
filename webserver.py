@@ -1,10 +1,11 @@
 import os
 import time
+import json
 import requests
 import aiohttp
 import uvicorn
-import gspread
 import google.auth
+import gspread
 from fastapi import FastAPI, Depends, HTTPException, Request
 from fastapi.staticfiles import StaticFiles
 from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
@@ -37,8 +38,8 @@ app.add_middleware(
 )
 auth_scheme = HTTPBearer()
 
-CREDENTIALS, PROJECT_ID = google.auth.default()
-SCOPES = ['https://spreadsheets.google.com/feeds', 'https://www.googleapis.com/auth/drive']
+SCOPES = ['https://spreadsheets.google.com/feeds', 'https://www.googleapis.com/auth/spreadsheets', 'https://www.googleapis.com/auth/drive']
+CREDENTIALS, PROJECT_ID = google.auth.default(scopes=SCOPES)
 STORAGE_CLIENT = storage.Client()
 GOOGLE_SHEET_ID = os.getenv('GOOGLE_SHEET_ID')
 GOOGLE_WORKSHEET_NAME = os.getenv('GOOGLE_WORKSHEET_NAME')
@@ -147,15 +148,34 @@ async def fetch_transaction(url, body):
         async with session.post(url, json=body) as response:
             return await response.json()
 
+def split_long_text(text, max_length=50000):
+    return [text[i:i+max_length] for i in range(0, len(text), max_length)]
+
 @retry(stop=stop_after_attempt(5), wait=wait_exponential(multiplier=1))
 async def submit_feedback_with_retry(feedback: FeedbackForm):
     client = gspread.authorize(CREDENTIALS)
     sheet = client.open_by_key(GOOGLE_SHEET_ID).worksheet(GOOGLE_WORKSHEET_NAME)
+    
+    simulation_data_parts = split_long_text(feedback.simulationData)
+    
     values = [[
-        feedback.date, feedback.network, feedback.txHash, feedback.explorer,
-        feedback.explanation, feedback.model, feedback.systemPrompt,
-        feedback.simulationData, feedback.accuracy, feedback.quality, feedback.comments
+        feedback.date,
+        feedback.network,
+        feedback.txHash,
+        feedback.explorer,
+        feedback.explanation,
+        feedback.model,
+        feedback.systemPrompt,
+        simulation_data_parts[0] if simulation_data_parts else "",
+        feedback.accuracy,
+        feedback.quality,
+        feedback.comments
     ]]
+    
+    if len(simulation_data_parts) > 1:
+        for part in simulation_data_parts[1:]:
+            values.append(["", "", "", "", "", "", "", part, "", "", ""])
+    
     sheet.append_rows(values)
 
 async def simulate_txs(transactions, network, force_refresh=False):
@@ -273,6 +293,16 @@ async def explain_transactions(request: ExplainTransactionsRequest, _: str = Dep
         is_human = await verify_recaptcha(request.recaptcha_token)
         if not is_human:
             raise HTTPException(status_code=400, detail="Bot detected")
+        msg = {
+            "action": "explainRequested",
+            "transactions": request.transactions,
+            "network": request.network,
+            "system": request.system,
+            "model": request.model,
+            "max_tokens": request.max_tokens,
+            "temperature": request.temperature
+        }
+        print(json.dumps(msg))
         return StreamingResponse(
             explain_txs(request.transactions, request.network, request.system, request.model, request.max_tokens, request.temperature, request.force_refresh),
             media_type="text/plain"
@@ -303,7 +333,12 @@ async def fetch_and_simulate_transaction(request: TransactionRequest, _: str = D
 
         if request.network_id not in network_endpoints:
             raise HTTPException(status_code=400, detail='Unsupported network ID')
-
+        msg = {
+            "action": "fetchAndSimulate",
+            "txHash": request.tx_hash,
+            "network": network_endpoints[request.network_id][1]
+        }
+        print(json.dumps(msg))
         url, network_name = network_endpoints[request.network_id]
         cached_simulation = await get_cached_simulation(request.tx_hash, network_name)
         if cached_simulation and not request.force_refresh:
@@ -343,6 +378,11 @@ async def fetch_and_simulate_transaction(request: TransactionRequest, _: str = D
 @app.post("/v1/feedback")
 async def submit_feedback(feedback: FeedbackForm):
     try:
+        msg = {
+            "action": "feedbackSubmitted",
+            "feedback": feedback.dict()
+        }
+        print(json.dumps(msg))
         await submit_feedback_with_retry(feedback)
         return {"message": "Feedback submitted successfully"}
     except Exception as e:
