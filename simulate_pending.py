@@ -223,7 +223,7 @@ async def fetch_tenderly_simulation(tx_details, tenderly_account_slug, tenderly_
     ) as response:
         return await response.json()
 
-async def simulate_pending_transaction(tx_hash, block_number, from_address, to_address, gas, value, input_data, tx_index, network):
+async def simulate_pending_transaction_tenderly(tx_hash, block_number, from_address, to_address, gas, value, input_data, tx_index, network):
     tenderly_account_slug = os.getenv('TENDERLY_ACCOUNT_SLUG')
     tenderly_project_slug = os.getenv('TENDERLY_PROJECT_SLUG')
     tenderly_access_key = os.getenv('TENDERLY_ACCESS_KEY')
@@ -243,7 +243,6 @@ async def simulate_pending_transaction(tx_hash, block_number, from_address, to_a
         'simulation_type': 'full',
         'generate_access_list': True,
     }
-
     async with aiohttp.ClientSession() as session:
         logging.info(f'Simulating transaction: {tx_hash}')
         sim_data = await fetch_tenderly_simulation(tx_details, tenderly_account_slug, tenderly_project_slug, tenderly_access_key, session)

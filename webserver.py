@@ -15,7 +15,7 @@ from anthropic import AsyncAnthropic
 from google.cloud import storage
 from explain import explain_transaction, get_cached_explanation
 from simulate import simulate_transaction, get_cached_simulation
-from simulate_pending import simulate_pending_transaction
+from simulate_pending import simulate_pending_transaction_tenderly
 from dotenv import load_dotenv
 from typing import List, Optional, Any
 from pydantic import BaseModel, Field, validator
@@ -228,7 +228,7 @@ async def simulate_pending_txs(transactions, network, force_refresh=False):
                     result.append(cached_simulation)
                     continue
         try:
-            trimmed_simulation = await simulate_pending_transaction(
+            trimmed_simulation = await simulate_pending_transaction_tenderly(
                 transaction.hash, transaction.block_number, transaction.from_address,
                 transaction.to_address, transaction.gas,
                 transaction.value, transaction.input, transaction.transaction_index, network
@@ -435,12 +435,12 @@ async def simulate_pending_transaction(request: PendingTransactionRequest, _: st
             raise HTTPException(status_code=400, detail='Unsupported network ID')
         msg = {
             "action": "simulatePendingTransaction",
-            "txHash": txHash,
+            "txHash": request.tx_hash,
             "network": network_endpoints[request.network_id][1]
         }
         print(json.dumps(msg))
         url, network_name = network_endpoints[request.network_id]
-        cached_simulation = await get_cached_simulation(txHash, network_name)
+        cached_simulation = await get_cached_simulation(request.tx_hash, network_name)
         if cached_simulation and not request.force_refresh:
             return {"result": cached_simulation}
 
@@ -452,7 +452,7 @@ async def simulate_pending_transaction(request: PendingTransactionRequest, _: st
         }
 
         transaction = Transaction(
-            hash=txHash,
+            hash=request.tx_hash,
             block_number=request.block_number,
             from_address=request.from_address,
             to_address=request.to_address,
