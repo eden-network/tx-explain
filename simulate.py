@@ -43,6 +43,21 @@ NETWORK_CONFIGS = {
         'blocks_table': 'bigquery-public-data.goog_blockchain_optimism_mainnet_us.blocks',
         'network_id': '10',
     },
+    'base': {
+        'table': 'none',
+        'blocks_table': 'none',
+        'network_id': '8453',
+    },
+    'blast': {
+        'table': 'none',
+        'blocks_table': 'none',
+        'network_id': '81467',
+    },
+    'mantle': {
+        'table': 'none',
+        'blocks_table': 'none',
+        'network_id': '5000',
+    },
 }
 
 async def sleep(seconds):
