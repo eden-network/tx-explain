@@ -133,7 +133,10 @@ class FeedbackForm(BaseModel):
             'ethereum': 'https://etherscan.io/tx/',
             'avalanche': 'https://snowtrace.io/tx/',
             'optimism': 'https://optimistic.etherscan.io/tx/',
-            'arbitrum': 'https://arbiscan.io/tx/'
+            'arbitrum': 'https://arbiscan.io/tx/',
+            'base': 'https://basescan.org/tx/',
+            'blast': 'https://blastscan.io/tx/',
+            'mantle': 'https://mantlescan.info/tx/'
         }
         explorer_base_url = base_urls.get(network)
         if explorer_base_url and tx_hash:
@@ -282,7 +285,10 @@ async def get_transaction(request: TransactionRequest, _: str = Depends(authenti
             '1': (os.getenv('ETH_RPC_ENDPOINT'), 'ethereum'),
             '42161': (os.getenv('ARB_RPC_ENDPOINT'), 'arbitrum'),
             '10': (os.getenv('OP_RPC_ENDPOINT'), 'optimism'),
-            '43114': ('https://api.avax.network/ext/bc/C/rpc', 'avalanche')
+            '43114': ('https://api.avax.network/ext/bc/C/rpc', 'avalanche'),
+            '8453': ('https://base.llamarpc.com	', 'base'),
+            '81467': ('https://rpc.blast.io', 'blast'),
+            '5000': ('https://rpc.mantle.xyz', 'mantle')
         }
 
         if request.network_id not in network_endpoints:
@@ -365,7 +371,10 @@ async def fetch_and_simulate_transaction(request: TransactionRequest, _: str = D
             '1': (os.getenv('ETH_RPC_ENDPOINT'), 'ethereum'),
             '42161': (os.getenv('ARB_RPC_ENDPOINT'), 'arbitrum'),
             '10': (os.getenv('OP_RPC_ENDPOINT'), 'optimism'),
-            '43114': ('https://api.avax.network/ext/bc/C/rpc', 'avalanche')
+            '43114': ('https://api.avax.network/ext/bc/C/rpc', 'avalanche'),
+            '8453': ('https://base.llamarpc.com	', 'base'),
+            '81467': ('https://rpc.blast.io', 'blast'),
+            '5000': ('https://rpc.mantle.xyz', 'mantle')
         }
 
         if request.network_id not in network_endpoints:
@@ -428,7 +437,10 @@ async def simulate_pending_transaction(request: PendingTransactionRequest, _: st
             '1': (os.getenv('ETH_RPC_ENDPOINT'), 'ethereum'),
             '42161': (os.getenv('ARB_RPC_ENDPOINT'), 'arbitrum'),
             '10': (os.getenv('OP_RPC_ENDPOINT'), 'optimism'),
-            '43114': ('https://api.avax.network/ext/bc/C/rpc', 'avalanche')
+            '43114': ('https://api.avax.network/ext/bc/C/rpc', 'avalanche'),
+            '8453': ('https://base.llamarpc.com	', 'base'),
+            '81467': ('https://rpc.blast.io', 'blast'),
+            '5000': ('https://rpc.mantle.xyz', 'mantle')
         }
 
         if request.network_id not in network_endpoints:
