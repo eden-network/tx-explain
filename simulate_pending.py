@@ -260,7 +260,11 @@ async def simulate_pending_transaction_tenderly(tx_hash, block_number, from_addr
     }
     async with aiohttp.ClientSession() as session:
         logging.info(f'Simulating transaction: {tx_hash}')
+
         sim_data = await fetch_tenderly_simulation(tx_details, tenderly_account_slug, tenderly_project_slug, tenderly_access_key, session)
+        print (sim_data)
+        if "error" in sim_data:
+            return (sim_data)
         if sim_data and 'transaction' in sim_data:
             sim_data['transaction']['hash'] = tx_hash
             if 'transaction_info' in sim_data['transaction']:

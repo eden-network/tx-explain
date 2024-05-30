@@ -477,7 +477,8 @@ async def simulate_pending_transaction(request: PendingTransactionRequest, _: st
             transaction_index=request.transaction_index
         )
         result = await simulate_pending_txs([transaction], network_name, True)
-
+        if "error" in result:
+            raise HTTPException(status_code=400, detail=str(result))
         return {"result": result[0]}
 
     except HTTPException as e:
