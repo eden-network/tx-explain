@@ -358,6 +358,7 @@ async def explain_transactions(request: ExplainTransactionsRequest, _: str = Dep
 @app.post("/v1/transaction/fetch_and_simulate")
 async def fetch_and_simulate_transaction(request: TransactionRequest, _: str = Depends(authenticate)):
     try:
+        print (request)
         is_human = await verify_recaptcha(request.recaptcha_token)
         if not is_human:
             raise HTTPException(status_code=400, detail="Bot detected")
@@ -401,7 +402,9 @@ async def fetch_and_simulate_transaction(request: TransactionRequest, _: str = D
         tx_data = resJson.get('result')
         if not tx_data or not isinstance(tx_data, dict) or not tx_data.get('blockNumber'):
             raise HTTPException(status_code=404, detail='Transaction not found')
-
+        if tx_data["to"]==None:
+            tx_data["to"]=""
+            #needed for contract creations
         transaction = Transaction(
             hash=tx_data["hash"],
             block_number=int(tx_data["blockNumber"], 16),
