@@ -16,6 +16,7 @@ from google.cloud import storage
 from explain import explain_transaction, get_cached_explanation
 from simulate import simulate_transaction, get_cached_simulation
 from simulate_pending import simulate_pending_transaction_tenderly
+from snap import simulate_pending_transaction_tenderly_snap
 from dotenv import load_dotenv
 from typing import List, Optional, Any
 from pydantic import BaseModel, Field, validator
@@ -68,6 +69,14 @@ class Transaction(BaseModel):
     value: str
     input: str
     transaction_index: int
+class SnapTransaction(BaseModel):
+    hash: str
+    block_number: int
+    from_address: str
+    to_address: str
+    gas: int
+    value: str
+    input: str
 
 class TransactionRequest(BaseModel):
     tx_hash: str
@@ -94,6 +103,19 @@ class PendingTransactionRequest(BaseModel):
     temperature: float = DEFAULT_TEMPERATURE
     force_refresh: bool = False
     recaptcha_token: str
+class SnapRequest(BaseModel):
+    network_id: str
+    tx_hash: str
+    block_number: int
+    from_address: str
+    to_address: str
+    gas: int
+    value: str
+    input: str
+    system: str = DEFAULT_SYSTEM_PROMPT
+    model: str = DEFAULT_MODEL
+    max_tokens: int = DEFAULT_MAX_TOKENS
+    temperature: float = DEFAULT_TEMPERATURE
 
 class SimulateTransactionsRequest(BaseModel):
     transactions: list[Transaction]
@@ -235,6 +257,27 @@ async def simulate_pending_txs(transactions, network, force_refresh=False):
                 transaction.hash, transaction.block_number, transaction.from_address,
                 transaction.to_address, transaction.gas,
                 transaction.value, transaction.input, transaction.transaction_index, network
+            )
+            result.append(trimmed_simulation)
+        except Exception as e:
+            raise HTTPException(status_code=500, detail=f"Error simulating transaction: {str(e)}")
+    return result
+async def simulate_pending_txs_snap(transactions, network, force_refresh=False):
+    result = []
+    for transaction in transactions:
+        if not force_refresh:
+            tx_hash = transaction.get('hash')
+            if tx_hash:
+                cached_simulation = await get_cached_simulation(tx_hash, network)
+                if cached_simulation:
+                    print(f"Using cached simulation for {tx_hash}")
+                    result.append(cached_simulation)
+                    continue
+        try:
+            trimmed_simulation = await simulate_pending_transaction_tenderly_snap(
+                transaction.hash, transaction.block_number, transaction.from_address,
+                transaction.to_address, transaction.gas,
+                transaction.value, transaction.input, network
             )
             result.append(trimmed_simulation)
         except Exception as e:
@@ -484,7 +527,60 @@ async def simulate_pending_transaction(request: PendingTransactionRequest, _: st
     except HTTPException as e:
         raise e
     except Exception as e:
-        raise HTTPException(status_code=400, detail=str(e))    
+        raise HTTPException(status_code=400, detail=str(e))
+@app.post("/v1/transaction/snap")
+async def simulate_pending_transaction_snap(request: SnapRequest, _: str = Depends(authenticate)):
+    try:
+        if not request.network_id:
+            raise HTTPException(status_code=400, detail='Missing network ID')
+        if not request.tx_hash:
+            raise HTTPException(status_code=400, detail='Missing transaction hash')
+
+        network_endpoints = {
+            '1': (os.getenv('ETH_RPC_ENDPOINT'), 'ethereum'),
+            '42161': (os.getenv('ARB_RPC_ENDPOINT'), 'arbitrum'),
+            '10': (os.getenv('OP_RPC_ENDPOINT'), 'optimism'),
+            '43114': ('https://api.avax.network/ext/bc/C/rpc', 'avalanche'),
+            '8453': ('https://base.llamarpc.com	', 'base'),
+            '81467': ('https://rpc.blast.io', 'blast'),
+            '5000': ('https://rpc.mantle.xyz', 'mantle')
+        }
+        network_id=str(int(request.network_id,16))
+        if network_id not in network_endpoints:
+            raise HTTPException(status_code=400, detail='Unsupported network ID')
+        msg = {
+            "action": "simulatePendingTransactionSnap",
+            "txHash": request.tx_hash,
+            "network": network_endpoints[request.network_id][1]
+        }
+        print(json.dumps(msg))
+        url, network_name = network_endpoints[network_id]
+
+        body = {
+            "id": 1,
+            "jsonrpc": "2.0",
+            "method": "eth_getTransactionByHash",
+            "params": [request.tx_hash]
+        }
+
+        transaction = SnapTransaction(
+            hash=request.tx_hash,
+            block_number=request.block_number,
+            from_address=request.from_address,
+            to_address=request.to_address,
+            gas=request.gas,
+            value=request.value,
+            input=request.input
+        )
+        result = await simulate_pending_txs([transaction], network_name, True)
+        if "error" in result:
+            raise HTTPException(status_code=400, detail=str(result))
+        return {"result": result[0]}
+
+    except HTTPException as e:
+        raise e
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=str(e))        
 @app.post("/v1/feedback")
 async def submit_feedback(feedback: FeedbackForm):
     try:
