@@ -16,6 +16,7 @@ from google.cloud import storage
 from explain import explain_transaction, get_cached_explanation
 from simulate import simulate_transaction, get_cached_simulation
 from simulate_pending import simulate_pending_transaction_tenderly
+from categorize import categorize
 from dotenv import load_dotenv
 from typing import List, Optional, Any
 from pydantic import BaseModel, Field, validator
@@ -58,6 +59,10 @@ RECAPTCHA_SECRET_KEY = os.getenv('RECAPTCHA_SECRET_KEY', '')
 
 with open('system_prompt.txt', 'r') as file:
     DEFAULT_SYSTEM_PROMPT = file.read()
+
+class CategorizationRequest(BaseModel):
+    tx_hash: str
+    recaptcha_token: str
 
 class Transaction(BaseModel):
     hash: str
@@ -497,6 +502,22 @@ async def submit_feedback(feedback: FeedbackForm):
         return {"message": "Feedback submitted successfully"}
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Failed to submit feedback: {str(e)}")
+    
+@app.post("/v1/transaction/categorize")
+async def post_categorize_transaction(request: CategorizationRequest, authorization: HTTPAuthorizationCredentials = Depends(auth_scheme)):
+    #data = await request.json()
+    tx_hash = request.tx_hash
+    
+    if not tx_hash:
+        raise HTTPException(status_code=400, detail="Transaction hash is required")
+    
+    if not await verify_recaptcha(request.recaptcha_token):
+        raise HTTPException(status_code=401, detail="Invalid reCAPTCHA token")
+    
+    # Call the categorize function and get the result
+    categorize_result = await categorize(tx_hash)
+    
+    return categorize_result
     
 @app.exception_handler(HTTPException)
 async def http_exception_handler(request: Request, exc: HTTPException):

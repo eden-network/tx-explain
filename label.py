@@ -35,26 +35,33 @@ def extract(json_obj, pattern = None):
 
 
 # Make the addresses into a string that will be used in the flipside query
-def format (addresses):
-    addresses_str = ', '.join([f"'{address}'" for address in addresses if address])
-    return addresses_str
+def addresses_to_string (addresses):
+    try:
+        addresses_str = ', '.join([f"'{address}'" for address in addresses if address])
+        return addresses_str
+    except Exception as e:
+        print("Error at addresses_to_string: ", e)
+        return None
 
 
 # Query Flipside
 def query_flipside (addresses_str, endpoint):
-    sql = f"""
-        select address,
-            address_name,
-            label,
-            label_type,
-            label_subtype
-        from ethereum.core.dim_labels 
-        where lower(address) in ({addresses_str})
-        """
-
-    query_result_set = endpoint.query(sql)
-    df = pd.DataFrame(query_result_set)
-    return df
+    try:
+        sql = f"""
+            select address,
+                address_name,
+                label,
+                label_type,
+                label_subtype
+            from ethereum.core.dim_labels 
+            where lower(address) in ({addresses_str})
+            """
+        query_result_set = endpoint.query(sql)
+        df = pd.DataFrame(query_result_set)
+        return df
+    except Exception as e:
+        print("Error at query_flipside: ", e)
+        return None
 
 # Put results into a json object
 def to_json(df):
@@ -84,7 +91,7 @@ def fetch_address_labels(sim_data, endpoint):
     address_regex = r'^0x[0-9a-fA-F]{40}$'
     try:
         addresses = extract(sim_data, address_regex)
-        addresses_str = format(addresses)
+        addresses_str = addresses_to_string(addresses)
         labels_data = query_flipside(addresses_str,endpoint)
         labels_json = to_json(labels_data)
         return labels_json
