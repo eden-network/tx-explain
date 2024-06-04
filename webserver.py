@@ -241,6 +241,7 @@ async def simulate_txs(transactions, network, force_refresh=False):
         except Exception as e:
             raise HTTPException(status_code=500, detail=f"Error simulating transaction: {str(e)}")
     return result
+
 async def simulate_pending_txs(transactions, network, force_refresh=False):
     result = []
     for transaction in transactions:
@@ -262,6 +263,7 @@ async def simulate_pending_txs(transactions, network, force_refresh=False):
         except Exception as e:
             raise HTTPException(status_code=500, detail=f"Error simulating transaction: {str(e)}")
     return result
+
 async def simulate_pending_txs_snap(transactions, network, force_refresh=False):
     result = []
     for transaction in transactions:
@@ -283,6 +285,7 @@ async def simulate_pending_txs_snap(transactions, network, force_refresh=False):
         except Exception as e:
             raise HTTPException(status_code=500, detail=f"Error simulating transaction: {str(e)}")
     return result
+
 async def explain_txs(transactions, network, system_prompt, model, max_tokens, temperature, force_refresh=False):
     for transaction in transactions:
         if not force_refresh:
@@ -528,6 +531,11 @@ async def simulate_pending_transaction(request: PendingTransactionRequest, _: st
         raise e
     except Exception as e:
         raise HTTPException(status_code=400, detail=str(e))
+
+# Needs to handle the missing of request values
+# No data storing
+# No streaming response
+# Just text output (the summary)
 @app.post("/v1/transaction/snap")
 async def simulate_pending_transaction_snap(request: SnapRequest, _: str = Depends(authenticate)):
     try:
@@ -572,7 +580,7 @@ async def simulate_pending_transaction_snap(request: SnapRequest, _: str = Depen
             value=request.value,
             input=request.input
         )
-        result = await simulate_pending_txs([transaction], network_name, True)
+        result = await simulate_pending_txs_snap([transaction], network_name, True)
         if "error" in result:
             raise HTTPException(status_code=400, detail=str(result))
         return {"result": result[0]}
@@ -580,7 +588,8 @@ async def simulate_pending_transaction_snap(request: SnapRequest, _: str = Depen
     except HTTPException as e:
         raise e
     except Exception as e:
-        raise HTTPException(status_code=400, detail=str(e))        
+        raise HTTPException(status_code=400, detail=str(e))  
+          
 @app.post("/v1/feedback")
 async def submit_feedback(feedback: FeedbackForm):
     try:
