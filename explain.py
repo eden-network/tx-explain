@@ -44,7 +44,7 @@ async def get_cached_explanation(tx_hash, network):
     return None
 
 # Added change: A new boolean argument for whether the explanation should be stored in bucket or not. By default, it is set to true.
-async def explain_transaction(client, payload, network='ethereum', system_prompt=None, model="claude-3-haiku-20240307", max_tokens=2000, temperature=0, store_to_bucket=True):
+async def explain_transaction(client, payload, network='ethereum', system_prompt=None, model="claude-3-haiku-20240307", max_tokens=2000, temperature=0, store_result=True):
     request_params = {
         'model': model,
         'max_tokens': max_tokens,
@@ -74,7 +74,7 @@ async def explain_transaction(client, payload, network='ethereum', system_prompt
     except Exception as e:
         print(f"Error streaming explanation: {str(e)}")
     
-    if store_to_bucket:
+    if store_result:
         print("Writing explanation to buckets...")
         tx_hash = payload.get('hash')
         if explanation and tx_hash:

@@ -238,7 +238,7 @@ async def fetch_tenderly_simulation(tx_details, tenderly_account_slug, tenderly_
     ) as response:
         return await response.json()
 
-async def simulate_pending_transaction_tenderly(tx_hash, block_number, from_address, to_address, gas, value, input_data, tx_index, network, store_to_bucket=True):
+async def simulate_pending_transaction_tenderly(tx_hash, block_number, from_address, to_address, gas, value, input_data, tx_index, network, store_result=True):
     tenderly_account_slug = os.getenv('TENDERLY_ACCOUNT_SLUG')
     tenderly_project_slug = os.getenv('TENDERLY_PROJECT_SLUG')
     tenderly_access_key = os.getenv('TENDERLY_ACCESS_KEY')
@@ -272,7 +272,7 @@ async def simulate_pending_transaction_tenderly(tx_hash, block_number, from_addr
                 if 'call_trace' in sim_data['transaction']['transaction_info']:
                     sim_data['transaction']['transaction_info']['call_trace']['hash'] = tx_hash
             
-            if store_to_bucket:
+            if store_result:
                 print("Storing the full simulation to bucket...")
                 try:
                     blob = bucket.blob(f'{network}/transactions/simulations/full/{tx_hash}.json')
@@ -283,7 +283,7 @@ async def simulate_pending_transaction_tenderly(tx_hash, block_number, from_addr
 
             trimmed = await extract_useful_fields(sim_data)
             
-            if store_to_bucket:
+            if store_result:
                 print("Storing the trimmed simulation to bucket...")
                 try:
                     blob = bucket.blob(f'{network}/transactions/simulations/trimmed/{tx_hash}.json')
