@@ -16,7 +16,6 @@ from google.cloud import storage
 from explain import explain_transaction, get_cached_explanation
 from simulate import simulate_transaction, get_cached_simulation
 from simulate_pending import simulate_pending_transaction_tenderly
-from snap import simulate_pending_transaction_tenderly_snap
 from dotenv import load_dotenv
 from typing import List, Optional, Any
 from pydantic import BaseModel, Field, validator
@@ -69,14 +68,6 @@ class Transaction(BaseModel):
     value: str
     input: str
     transaction_index: int
-class SnapTransaction(BaseModel):
-    hash: str
-    block_number: int
-    from_address: str
-    to_address: str
-    gas: int
-    value: str
-    input: str
 
 class TransactionRequest(BaseModel):
     tx_hash: str
@@ -112,6 +103,7 @@ class SnapRequest(BaseModel):
     gas: int
     value: str
     input: str
+    transaction_index: int
     system: str = DEFAULT_SYSTEM_PROMPT
     model: str = DEFAULT_MODEL
     max_tokens: int = DEFAULT_MAX_TOKENS
@@ -242,7 +234,7 @@ async def simulate_txs(transactions, network, force_refresh=False):
             raise HTTPException(status_code=500, detail=f"Error simulating transaction: {str(e)}")
     return result
 
-async def simulate_pending_txs(transactions, network, force_refresh=False):
+async def simulate_pending_txs(transactions, network, storage_status, force_refresh=False):
     result = []
     for transaction in transactions:
         if not force_refresh:
@@ -257,36 +249,15 @@ async def simulate_pending_txs(transactions, network, force_refresh=False):
             trimmed_simulation = await simulate_pending_transaction_tenderly(
                 transaction.hash, transaction.block_number, transaction.from_address,
                 transaction.to_address, transaction.gas,
-                transaction.value, transaction.input, transaction.transaction_index, network
+                transaction.value, transaction.input, transaction.transaction_index, network,
+                storage_status
             )
             result.append(trimmed_simulation)
         except Exception as e:
             raise HTTPException(status_code=500, detail=f"Error simulating transaction: {str(e)}")
     return result
 
-async def simulate_pending_txs_snap(transactions, network, force_refresh=False):
-    result = []
-    for transaction in transactions:
-        if not force_refresh:
-            tx_hash = transaction.get('hash')
-            if tx_hash:
-                cached_simulation = await get_cached_simulation(tx_hash, network)
-                if cached_simulation:
-                    print(f"Using cached simulation for {tx_hash}")
-                    result.append(cached_simulation)
-                    continue
-        try:
-            trimmed_simulation = await simulate_pending_transaction_tenderly_snap(
-                transaction.hash, transaction.block_number, transaction.from_address,
-                transaction.to_address, transaction.gas,
-                transaction.value, transaction.input, network
-            )
-            result.append(trimmed_simulation)
-        except Exception as e:
-            raise HTTPException(status_code=500, detail=f"Error simulating transaction: {str(e)}")
-    return result
-
-async def explain_txs(transactions, network, system_prompt, model, max_tokens, temperature, force_refresh=False):
+async def explain_txs(transactions, network, system_prompt, model, max_tokens, temperature, storage_status, force_refresh=False):
     for transaction in transactions:
         if not force_refresh:
             tx_hash = transaction.get('hash')
@@ -309,7 +280,7 @@ async def explain_txs(transactions, network, system_prompt, model, max_tokens, t
                         continue
         try:
             async for item in explain_transaction(
-                ANTHROPIC_CLIENT, transaction, network=network, system_prompt=system_prompt, model=model, max_tokens=max_tokens, temperature=temperature
+                ANTHROPIC_CLIENT, transaction, network=network, system_prompt=system_prompt, model=model, max_tokens=max_tokens, temperature=temperature, store_to_bucket=storage_status
             ):
                 yield item
         except Exception as e:
@@ -392,8 +363,10 @@ async def explain_transactions(request: ExplainTransactionsRequest, _: str = Dep
             "temperature": request.temperature
         }
         print(json.dumps(msg))
+        # Setting storage status to true
+        storage_status = True
         return StreamingResponse(
-            explain_txs(request.transactions, request.network, request.system, request.model, request.max_tokens, request.temperature, request.force_refresh),
+            explain_txs(request.transactions, request.network, request.system, request.model, request.max_tokens, request.temperature, storage_status ,request.force_refresh),
             media_type="text/plain"
         )
     except HTTPException as e:
@@ -522,7 +495,8 @@ async def simulate_pending_transaction(request: PendingTransactionRequest, _: st
             input=request.input,
             transaction_index=request.transaction_index
         )
-        result = await simulate_pending_txs([transaction], network_name, True)
+        storage_status = True
+        result = await simulate_pending_txs([transaction], network_name, storage_status, True)
         if "error" in result:
             raise HTTPException(status_code=400, detail=str(result))
         return {"result": result[0]}
@@ -532,12 +506,15 @@ async def simulate_pending_transaction(request: PendingTransactionRequest, _: st
     except Exception as e:
         raise HTTPException(status_code=400, detail=str(e))
 
-# Needs to handle the missing of request values
+
+
+
+# ---------------------------------------------------------------------------
 # No data storing
 # No streaming response
 # Just text output (the summary)
 @app.post("/v1/transaction/snap")
-async def simulate_pending_transaction_snap(request: SnapRequest, _: str = Depends(authenticate)):
+async def get_snap(request: SnapRequest, _: str = Depends(authenticate)):
     try:
         if not request.network_id:
             raise HTTPException(status_code=400, detail='Missing network ID')
@@ -561,6 +538,7 @@ async def simulate_pending_transaction_snap(request: SnapRequest, _: str = Depen
             "txHash": request.tx_hash,
             "network": network_endpoints[request.network_id][1]
         }
+
         print(json.dumps(msg))
         url, network_name = network_endpoints[network_id]
 
@@ -571,25 +549,39 @@ async def simulate_pending_transaction_snap(request: SnapRequest, _: str = Depen
             "params": [request.tx_hash]
         }
 
-        transaction = SnapTransaction(
+        transaction = Transaction(
             hash=request.tx_hash,
             block_number=request.block_number,
             from_address=request.from_address,
             to_address=request.to_address,
             gas=request.gas,
             value=request.value,
-            input=request.input
+            input=request.input,
+            transaction_index=request.transaction_index
         )
-        result = await simulate_pending_txs_snap([transaction], network_name, True)
-        if "error" in result:
-            raise HTTPException(status_code=400, detail=str(result))
-        return {"result": result[0]}
+        
+        # Setting storage status to false for both simulations and explanations
+        storage_status = False
+
+        simulation = await simulate_pending_txs([transaction], network_name, storage_status, True)
+
+        if "error" in simulation:
+            raise HTTPException(status_code=400, detail=str(simulation))
+
+        force_refresh = False
+        explanation = ""
+        async for item in explain_txs(simulation, request.network_id, request.system, request.model, request.max_tokens, request.temperature, storage_status, force_refresh):
+            explanation += item
+
+        return explanation
 
     except HTTPException as e:
         raise e
     except Exception as e:
-        raise HTTPException(status_code=400, detail=str(e))  
-          
+        raise HTTPException(status_code=400, detail=str(e))     
+
+
+
 @app.post("/v1/feedback")
 async def submit_feedback(feedback: FeedbackForm):
     try:
