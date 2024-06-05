@@ -15,12 +15,12 @@ from anthropic import AsyncAnthropic
 from google.cloud import storage
 from explain import explain_transaction, get_cached_explanation
 from simulate import simulate_transaction, get_cached_simulation
-from simulate_pending import simulate_pending_transaction_tenderly
-from categorize import categorize
 from dotenv import load_dotenv
 from typing import List, Optional, Any
 from pydantic import BaseModel, Field, validator
 from tenacity import retry, stop_after_attempt, wait_exponential
+from categorize import categorize  # Import categorize function
+import time
 
 load_dotenv()
 
@@ -62,6 +62,7 @@ with open('system_prompt.txt', 'r') as file:
 
 class CategorizationRequest(BaseModel):
     tx_hash: str
+    network_id: str
     recaptcha_token: str
 
 class Transaction(BaseModel):
@@ -77,22 +78,6 @@ class Transaction(BaseModel):
 class TransactionRequest(BaseModel):
     tx_hash: str
     network_id: str
-    system: str = DEFAULT_SYSTEM_PROMPT
-    model: str = DEFAULT_MODEL
-    max_tokens: int = DEFAULT_MAX_TOKENS
-    temperature: float = DEFAULT_TEMPERATURE
-    force_refresh: bool = False
-    recaptcha_token: str
-class PendingTransactionRequest(BaseModel):
-    network_id: str
-    tx_hash: str
-    block_number: int
-    from_address: str
-    to_address: str
-    gas: int
-    value: str
-    input: str
-    transaction_index: int
     system: str = DEFAULT_SYSTEM_PROMPT
     model: str = DEFAULT_MODEL
     max_tokens: int = DEFAULT_MAX_TOKENS
@@ -127,7 +112,9 @@ class FeedbackForm(BaseModel):
     comments: str
     accuracy: int = Field(gt=0, lt=6)  # Ensures accuracy is between 1 and 5
     quality: int = Field(gt=0, lt=6)  # Ensures quality is between 1 and 5
-    explorer: Optional[str] = None  # Will be set based on network and txHash
+    explorer: Optional[str] = None  # Will be set based on network and txHash,
+
+
 
 
     @validator('explorer', pre=True, always=True)
@@ -138,10 +125,7 @@ class FeedbackForm(BaseModel):
             'ethereum': 'https://etherscan.io/tx/',
             'avalanche': 'https://snowtrace.io/tx/',
             'optimism': 'https://optimistic.etherscan.io/tx/',
-            'arbitrum': 'https://arbiscan.io/tx/',
-            'base': 'https://basescan.org/tx/',
-            'blast': 'https://blastscan.io/tx/',
-            'mantle': 'https://mantlescan.info/tx/'
+            'arbitrum': 'https://arbiscan.io/tx/'
         }
         explorer_base_url = base_urls.get(network)
         if explorer_base_url and tx_hash:
@@ -224,32 +208,13 @@ async def simulate_txs(transactions, network, force_refresh=False):
         except Exception as e:
             raise HTTPException(status_code=500, detail=f"Error simulating transaction: {str(e)}")
     return result
-async def simulate_pending_txs(transactions, network, force_refresh=False):
-    result = []
-    for transaction in transactions:
-        if not force_refresh:
-            tx_hash = transaction.get('hash')
-            if tx_hash:
-                cached_simulation = await get_cached_simulation(tx_hash, network)
-                if cached_simulation:
-                    print(f"Using cached simulation for {tx_hash}")
-                    result.append(cached_simulation)
-                    continue
-        try:
-            trimmed_simulation = await simulate_pending_transaction_tenderly(
-                transaction.hash, transaction.block_number, transaction.from_address,
-                transaction.to_address, transaction.gas,
-                transaction.value, transaction.input, transaction.transaction_index, network
-            )
-            result.append(trimmed_simulation)
-        except Exception as e:
-            raise HTTPException(status_code=500, detail=f"Error simulating transaction: {str(e)}")
-    return result
+
 async def explain_txs(transactions, network, system_prompt, model, max_tokens, temperature, force_refresh=False):
     for transaction in transactions:
         if not force_refresh:
             tx_hash = transaction.get('hash')
             if tx_hash:
+                print("Network in explain_txs: ", network)
                 cached_explanation = await get_cached_explanation(tx_hash, network)
                 if cached_explanation:
                     explanation = cached_explanation.get('result')
@@ -290,10 +255,7 @@ async def get_transaction(request: TransactionRequest, _: str = Depends(authenti
             '1': (os.getenv('ETH_RPC_ENDPOINT'), 'ethereum'),
             '42161': (os.getenv('ARB_RPC_ENDPOINT'), 'arbitrum'),
             '10': (os.getenv('OP_RPC_ENDPOINT'), 'optimism'),
-            '43114': ('https://api.avax.network/ext/bc/C/rpc', 'avalanche'),
-            '8453': ('https://base.llamarpc.com	', 'base'),
-            '81467': ('https://rpc.blast.io', 'blast'),
-            '5000': ('https://rpc.mantle.xyz', 'mantle')
+            '43114': ('https://api.avax.network/ext/bc/C/rpc', 'avalanche')
         }
 
         if request.network_id not in network_endpoints:
@@ -351,6 +313,7 @@ async def explain_transactions(request: ExplainTransactionsRequest, _: str = Dep
             "temperature": request.temperature
         }
         print(json.dumps(msg))
+        print("Network in explain_transactions: ", request.network)
         return StreamingResponse(
             explain_txs(request.transactions, request.network, request.system, request.model, request.max_tokens, request.temperature, request.force_refresh),
             media_type="text/plain"
@@ -363,7 +326,6 @@ async def explain_transactions(request: ExplainTransactionsRequest, _: str = Dep
 @app.post("/v1/transaction/fetch_and_simulate")
 async def fetch_and_simulate_transaction(request: TransactionRequest, _: str = Depends(authenticate)):
     try:
-        print (request)
         is_human = await verify_recaptcha(request.recaptcha_token)
         if not is_human:
             raise HTTPException(status_code=400, detail="Bot detected")
@@ -377,10 +339,7 @@ async def fetch_and_simulate_transaction(request: TransactionRequest, _: str = D
             '1': (os.getenv('ETH_RPC_ENDPOINT'), 'ethereum'),
             '42161': (os.getenv('ARB_RPC_ENDPOINT'), 'arbitrum'),
             '10': (os.getenv('OP_RPC_ENDPOINT'), 'optimism'),
-            '43114': ('https://api.avax.network/ext/bc/C/rpc', 'avalanche'),
-            '8453': ('https://base.llamarpc.com	', 'base'),
-            '81467': ('https://rpc.blast.io', 'blast'),
-            '5000': ('https://rpc.mantle.xyz', 'mantle')
+            '43114': ('https://api.avax.network/ext/bc/C/rpc', 'avalanche')
         }
 
         if request.network_id not in network_endpoints:
@@ -391,7 +350,11 @@ async def fetch_and_simulate_transaction(request: TransactionRequest, _: str = D
             "network": network_endpoints[request.network_id][1]
         }
         print(json.dumps(msg))
+
+        print("Network ID: ", request.network_id)
+
         url, network_name = network_endpoints[request.network_id]
+        print("URL and Network Name: \n", url, network_name)
         cached_simulation = await get_cached_simulation(request.tx_hash, network_name)
         if cached_simulation and not request.force_refresh:
             return {"result": cached_simulation}
@@ -402,14 +365,13 @@ async def fetch_and_simulate_transaction(request: TransactionRequest, _: str = D
             "method": "eth_getTransactionByHash",
             "params": [request.tx_hash]
         }
-
+        print("Body: \n", body)
         resJson = await fetch_transaction(url, body)
         tx_data = resJson.get('result')
+        print("tx_data: \n", tx_data)
         if not tx_data or not isinstance(tx_data, dict) or not tx_data.get('blockNumber'):
             raise HTTPException(status_code=404, detail='Transaction not found')
-        if tx_data["to"]==None:
-            tx_data["to"]=""
-            #needed for contract creations
+
         transaction = Transaction(
             hash=tx_data["hash"],
             block_number=int(tx_data["blockNumber"], 16),
@@ -420,6 +382,7 @@ async def fetch_and_simulate_transaction(request: TransactionRequest, _: str = D
             input=tx_data["input"],
             transaction_index=int(tx_data["transactionIndex"], 16)
         )
+        print("Transaction: \n", transaction)
         result = await simulate_txs([transaction], network_name, True)
 
         return {"result": result[0]}
@@ -428,68 +391,7 @@ async def fetch_and_simulate_transaction(request: TransactionRequest, _: str = D
         raise e
     except Exception as e:
         raise HTTPException(status_code=400, detail=str(e))
-
-@app.post("/v1/transaction/simulate_pending")
-async def simulate_pending_transaction(request: PendingTransactionRequest, _: str = Depends(authenticate)):
-    try:
-        is_human = await verify_recaptcha(request.recaptcha_token)
-        if not is_human:
-            raise HTTPException(status_code=400, detail="Bot detected")
-
-        if not request.network_id:
-            raise HTTPException(status_code=400, detail='Missing network ID')
-        if not request.tx_hash:
-            raise HTTPException(status_code=400, detail='Missing transaction hash')
-
-        network_endpoints = {
-            '1': (os.getenv('ETH_RPC_ENDPOINT'), 'ethereum'),
-            '42161': (os.getenv('ARB_RPC_ENDPOINT'), 'arbitrum'),
-            '10': (os.getenv('OP_RPC_ENDPOINT'), 'optimism'),
-            '43114': ('https://api.avax.network/ext/bc/C/rpc', 'avalanche'),
-            '8453': ('https://base.llamarpc.com	', 'base'),
-            '81467': ('https://rpc.blast.io', 'blast'),
-            '5000': ('https://rpc.mantle.xyz', 'mantle')
-        }
-
-        if request.network_id not in network_endpoints:
-            raise HTTPException(status_code=400, detail='Unsupported network ID')
-        msg = {
-            "action": "simulatePendingTransaction",
-            "txHash": request.tx_hash,
-            "network": network_endpoints[request.network_id][1]
-        }
-        print(json.dumps(msg))
-        url, network_name = network_endpoints[request.network_id]
-        cached_simulation = await get_cached_simulation(request.tx_hash, network_name)
-        if cached_simulation and not request.force_refresh:
-            return {"result": cached_simulation}
-
-        body = {
-            "id": 1,
-            "jsonrpc": "2.0",
-            "method": "eth_getTransactionByHash",
-            "params": [request.tx_hash]
-        }
-
-        transaction = Transaction(
-            hash=request.tx_hash,
-            block_number=request.block_number,
-            from_address=request.from_address,
-            to_address=request.to_address,
-            gas=request.gas,
-            value=request.value,
-            input=request.input,
-            transaction_index=request.transaction_index
-        )
-        result = await simulate_pending_txs([transaction], network_name, True)
-        if "error" in result:
-            raise HTTPException(status_code=400, detail=str(result))
-        return {"result": result[0]}
-
-    except HTTPException as e:
-        raise e
-    except Exception as e:
-        raise HTTPException(status_code=400, detail=str(e))    
+    
 @app.post("/v1/feedback")
 async def submit_feedback(feedback: FeedbackForm):
     try:
@@ -502,20 +404,41 @@ async def submit_feedback(feedback: FeedbackForm):
         return {"message": "Feedback submitted successfully"}
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Failed to submit feedback: {str(e)}")
-    
+
 @app.post("/v1/transaction/categorize")
 async def post_categorize_transaction(request: CategorizationRequest, authorization: HTTPAuthorizationCredentials = Depends(auth_scheme)):
-    #data = await request.json()
     tx_hash = request.tx_hash
-    
+    network_id = request.network_id
     if not tx_hash:
         raise HTTPException(status_code=400, detail="Transaction hash is required")
+    if not network_id:
+            raise HTTPException(status_code=400, detail='Missing network ID')
+
+    network_endpoints = {
+            '1': (os.getenv('ETH_RPC_ENDPOINT'), 'ethereum'),
+            '42161': (os.getenv('ARB_RPC_ENDPOINT'), 'arbitrum'),
+            '10': (os.getenv('OP_RPC_ENDPOINT'), 'optimism'),
+            '43114': ('https://api.avax.network/ext/bc/C/rpc', 'avalanche')
+        }
+
+    if network_id not in network_endpoints:
+            raise HTTPException(status_code=400, detail='Unsupported network ID')
+
+    msg = {
+            "action": "categorize",
+            "txHash": request.tx_hash,
+            "network": network_endpoints[request.network_id][1]
+        }
+    print(json.dumps(msg))
+    network = network_endpoints[request.network_id][1]
+    rpc_endpoint = network_endpoints[request.network_id][0]
+    print("Network in categorize: ", network, rpc_endpoint)
     
     if not await verify_recaptcha(request.recaptcha_token):
         raise HTTPException(status_code=401, detail="Invalid reCAPTCHA token")
     
     # Call the categorize function and get the result
-    categorize_result = await categorize(tx_hash)
+    categorize_result = await categorize(tx_hash, network, rpc_endpoint)
     
     return categorize_result
     

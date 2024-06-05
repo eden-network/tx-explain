@@ -38,8 +38,10 @@ async def read_json_files(network):
     return json_data
 
 async def get_cached_explanation(tx_hash, network):
+    print("Network for cashed: ", network)
     blob = bucket.blob(f'{network}/transactions/explanations/{tx_hash}.json')
     if blob.exists():
+        print("Returned: ", f'{network}/transactions/explanations/{tx_hash}.json')
         return json.loads(blob.download_as_string())
     return None
 
