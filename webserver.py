@@ -112,6 +112,21 @@ class PendingTransactionRequest(BaseModel):
     force_refresh: bool = False
     recaptcha_token: str
 
+class SnapRequest(BaseModel):
+    network_id: str
+    tx_hash: str
+    block_number: int
+    from_address: str
+    to_address: str
+    gas: int
+    value: str
+    input: str
+    transaction_index: int
+    system: str = DEFAULT_SYSTEM_PROMPT
+    model: str = DEFAULT_MODEL
+    max_tokens: int = DEFAULT_MAX_TOKENS
+    temperature: float = DEFAULT_TEMPERATURE
+
 class SimulateTransactionsRequest(BaseModel):
     transactions: list[Transaction]
     network: str = 'ethereum'
