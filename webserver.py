@@ -15,6 +15,7 @@ from anthropic import AsyncAnthropic
 from google.cloud import storage
 from explain import explain_transaction, get_cached_explanation
 from simulate import simulate_transaction, get_cached_simulation
+from simulate_pending import simulate_pending_transaction_tenderly
 from dotenv import load_dotenv
 from typing import List, Optional, Any
 from pydantic import BaseModel, Field, validator
@@ -85,6 +86,23 @@ class TransactionRequest(BaseModel):
     force_refresh: bool = False
     recaptcha_token: str
 
+class PendingTransactionRequest(BaseModel):
+    network_id: str
+    tx_hash: str
+    block_number: int
+    from_address: str
+    to_address: str
+    gas: int
+    value: str
+    input: str
+    transaction_index: int
+    system: str = DEFAULT_SYSTEM_PROMPT
+    model: str = DEFAULT_MODEL
+    max_tokens: int = DEFAULT_MAX_TOKENS
+    temperature: float = DEFAULT_TEMPERATURE
+    force_refresh: bool = False
+    recaptcha_token: str
+
 class SimulateTransactionsRequest(BaseModel):
     transactions: list[Transaction]
     network: str = 'ethereum'
@@ -115,8 +133,6 @@ class FeedbackForm(BaseModel):
     explorer: Optional[str] = None  # Will be set based on network and txHash,
 
 
-
-
     @validator('explorer', pre=True, always=True)
     def set_explorer_url(cls, v, values):
         network = values.get('network', '').lower()
@@ -125,7 +141,10 @@ class FeedbackForm(BaseModel):
             'ethereum': 'https://etherscan.io/tx/',
             'avalanche': 'https://snowtrace.io/tx/',
             'optimism': 'https://optimistic.etherscan.io/tx/',
-            'arbitrum': 'https://arbiscan.io/tx/'
+            'arbitrum': 'https://arbiscan.io/tx/',
+            'base': 'https://basescan.org/tx/',
+            'blast': 'https://blastscan.io/tx/',
+            'mantle': 'https://mantlescan.info/tx/'
         }
         explorer_base_url = base_urls.get(network)
         if explorer_base_url and tx_hash:
@@ -209,12 +228,34 @@ async def simulate_txs(transactions, network, force_refresh=False):
             raise HTTPException(status_code=500, detail=f"Error simulating transaction: {str(e)}")
     return result
 
-async def explain_txs(transactions, network, system_prompt, model, max_tokens, temperature, force_refresh=False):
+async def simulate_pending_txs(transactions, network, store_result, force_refresh=False):
+    result = []
     for transaction in transactions:
         if not force_refresh:
             tx_hash = transaction.get('hash')
             if tx_hash:
-                print("Network in explain_txs: ", network)
+                cached_simulation = await get_cached_simulation(tx_hash, network)
+                if cached_simulation:
+                    print(f"Using cached simulation for {tx_hash}")
+                    result.append(cached_simulation)
+                    continue
+        try:
+            trimmed_simulation = await simulate_pending_transaction_tenderly(
+                transaction.hash, transaction.block_number, transaction.from_address,
+                transaction.to_address, transaction.gas,
+                transaction.value, transaction.input, transaction.transaction_index, network,
+                store_result
+            )
+            result.append(trimmed_simulation)
+        except Exception as e:
+            raise HTTPException(status_code=500, detail=f"Error simulating transaction: {str(e)}")
+    return result
+
+async def explain_txs(transactions, network, system_prompt, model, max_tokens, temperature, store_result, force_refresh=False):
+    for transaction in transactions:
+        if not force_refresh:
+            tx_hash = transaction.get('hash')
+            if tx_hash:
                 cached_explanation = await get_cached_explanation(tx_hash, network)
                 if cached_explanation:
                     explanation = cached_explanation.get('result')
@@ -233,7 +274,7 @@ async def explain_txs(transactions, network, system_prompt, model, max_tokens, t
                         continue
         try:
             async for item in explain_transaction(
-                ANTHROPIC_CLIENT, transaction, network=network, system_prompt=system_prompt, model=model, max_tokens=max_tokens, temperature=temperature
+                ANTHROPIC_CLIENT, transaction, network=network, system_prompt=system_prompt, model=model, max_tokens=max_tokens, temperature=temperature, store_result=store_result
             ):
                 yield item
         except Exception as e:
@@ -251,12 +292,7 @@ async def get_transaction(request: TransactionRequest, _: str = Depends(authenti
         if not request.tx_hash:
             raise HTTPException(status_code=400, detail='Missing transaction hash')
 
-        network_endpoints = {
-            '1': (os.getenv('ETH_RPC_ENDPOINT'), 'ethereum'),
-            '42161': (os.getenv('ARB_RPC_ENDPOINT'), 'arbitrum'),
-            '10': (os.getenv('OP_RPC_ENDPOINT'), 'optimism'),
-            '43114': ('https://api.avax.network/ext/bc/C/rpc', 'avalanche')
-        }
+        global network_endpoints
 
         if request.network_id not in network_endpoints:
             raise HTTPException(status_code=400, detail='Unsupported network ID')
@@ -313,9 +349,11 @@ async def explain_transactions(request: ExplainTransactionsRequest, _: str = Dep
             "temperature": request.temperature
         }
         print(json.dumps(msg))
-        print("Network in explain_transactions: ", request.network)
+
+        # Setting storage status to true
+        store_result = True
         return StreamingResponse(
-            explain_txs(request.transactions, request.network, request.system, request.model, request.max_tokens, request.temperature, request.force_refresh),
+            explain_txs(request.transactions, request.network, request.system, request.model, request.max_tokens, request.temperature, store_result ,request.force_refresh),
             media_type="text/plain"
         )
     except HTTPException as e:
@@ -326,6 +364,7 @@ async def explain_transactions(request: ExplainTransactionsRequest, _: str = Dep
 @app.post("/v1/transaction/fetch_and_simulate")
 async def fetch_and_simulate_transaction(request: TransactionRequest, _: str = Depends(authenticate)):
     try:
+        print (request)
         is_human = await verify_recaptcha(request.recaptcha_token)
         if not is_human:
             raise HTTPException(status_code=400, detail="Bot detected")
@@ -335,12 +374,7 @@ async def fetch_and_simulate_transaction(request: TransactionRequest, _: str = D
         if not request.tx_hash:
             raise HTTPException(status_code=400, detail='Missing transaction hash')
 
-        network_endpoints = {
-            '1': (os.getenv('ETH_RPC_ENDPOINT'), 'ethereum'),
-            '42161': (os.getenv('ARB_RPC_ENDPOINT'), 'arbitrum'),
-            '10': (os.getenv('OP_RPC_ENDPOINT'), 'optimism'),
-            '43114': ('https://api.avax.network/ext/bc/C/rpc', 'avalanche')
-        }
+        global network_endpoints
 
         if request.network_id not in network_endpoints:
             raise HTTPException(status_code=400, detail='Unsupported network ID')
@@ -350,14 +384,11 @@ async def fetch_and_simulate_transaction(request: TransactionRequest, _: str = D
             "network": network_endpoints[request.network_id][1]
         }
         print(json.dumps(msg))
-
-        print("Network ID: ", request.network_id)
-
         url, network_name = network_endpoints[request.network_id]
-        print("URL and Network Name: \n", url, network_name)
         cached_simulation = await get_cached_simulation(request.tx_hash, network_name)
-        if cached_simulation and not request.force_refresh:
-            return {"result": cached_simulation}
+        if not request.force_refresh:
+            if cached_simulation:
+                return {"result": cached_simulation}
 
         body = {
             "id": 1,
@@ -365,13 +396,14 @@ async def fetch_and_simulate_transaction(request: TransactionRequest, _: str = D
             "method": "eth_getTransactionByHash",
             "params": [request.tx_hash]
         }
-        print("Body: \n", body)
+
         resJson = await fetch_transaction(url, body)
         tx_data = resJson.get('result')
-        print("tx_data: \n", tx_data)
         if not tx_data or not isinstance(tx_data, dict) or not tx_data.get('blockNumber'):
             raise HTTPException(status_code=404, detail='Transaction not found')
-
+        if tx_data["to"]==None:
+            tx_data["to"]=""
+            #needed for contract creations
         transaction = Transaction(
             hash=tx_data["hash"],
             block_number=int(tx_data["blockNumber"], 16),
@@ -382,9 +414,64 @@ async def fetch_and_simulate_transaction(request: TransactionRequest, _: str = D
             input=tx_data["input"],
             transaction_index=int(tx_data["transactionIndex"], 16)
         )
-        print("Transaction: \n", transaction)
         result = await simulate_txs([transaction], network_name, True)
 
+        return {"result": result[0]}
+
+    except HTTPException as e:
+        raise e
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=str(e))
+
+@app.post("/v1/transaction/simulate_pending")
+async def simulate_pending_transaction(request: PendingTransactionRequest, _: str = Depends(authenticate)):
+    try:
+        is_human = await verify_recaptcha(request.recaptcha_token)
+        if not is_human:
+            raise HTTPException(status_code=400, detail="Bot detected")
+
+        if not request.network_id:
+            raise HTTPException(status_code=400, detail='Missing network ID')
+        if not request.tx_hash:
+            raise HTTPException(status_code=400, detail='Missing transaction hash')
+
+        global network_endpoints
+
+        if request.network_id not in network_endpoints:
+            raise HTTPException(status_code=400, detail='Unsupported network ID')
+        msg = {
+            "action": "simulatePendingTransaction",
+            "txHash": request.tx_hash,
+            "network": network_endpoints[request.network_id][1]
+        }
+        print(json.dumps(msg))
+        url, network_name = network_endpoints[request.network_id]
+        cached_simulation = await get_cached_simulation(request.tx_hash, network_name)
+        if not request.force_refresh:
+            if cached_simulation:
+                return {"result": cached_simulation}
+
+        body = {
+            "id": 1,
+            "jsonrpc": "2.0",
+            "method": "eth_getTransactionByHash",
+            "params": [request.tx_hash]
+        }
+
+        transaction = Transaction(
+            hash=request.tx_hash,
+            block_number=request.block_number,
+            from_address=request.from_address,
+            to_address=request.to_address,
+            gas=request.gas,
+            value=request.value,
+            input=request.input,
+            transaction_index=request.transaction_index
+        )
+        store_result = True
+        result = await simulate_pending_txs([transaction], network_name, store_result, True)
+        if "error" in result:
+            raise HTTPException(status_code=400, detail=str(result))
         return {"result": result[0]}
 
     except HTTPException as e:
@@ -404,6 +491,69 @@ async def submit_feedback(feedback: FeedbackForm):
         return {"message": "Feedback submitted successfully"}
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Failed to submit feedback: {str(e)}")
+
+# ---------------------------------------------------------------------------
+# No data storing
+# No streaming response
+# Just text output (the summary)
+@app.post("/v1/transaction/snap")
+async def simulate_for_snap(request: SnapRequest, _: str = Depends(authenticate)):
+    try:
+        if not request.network_id:
+            raise HTTPException(status_code=400, detail='Missing network ID')
+        if not request.tx_hash:
+            raise HTTPException(status_code=400, detail='Missing transaction hash')
+
+        global network_endpoints
+        network_id=str(int(request.network_id,16))
+        if network_id not in network_endpoints:
+            raise HTTPException(status_code=400, detail='Unsupported network ID')
+        msg = {
+            "action": "simulatePendingTransactionSnap",
+            "txHash": request.tx_hash,
+            "network": network_endpoints[request.network_id][1]
+        }
+
+        print(json.dumps(msg))
+        url, network_name = network_endpoints[network_id]
+
+        body = {
+            "id": 1,
+            "jsonrpc": "2.0",
+            "method": "eth_getTransactionByHash",
+            "params": [request.tx_hash]
+        }
+
+        transaction = Transaction(
+            hash=request.tx_hash,
+            block_number=request.block_number,
+            from_address=request.from_address,
+            to_address=request.to_address,
+            gas=request.gas,
+            value=request.value,
+            input=request.input,
+            transaction_index=request.transaction_index
+        )
+        
+        # Setting store_result to false for both simulations and explanations
+        store_result = False
+
+        simulation = await simulate_pending_txs([transaction], network_name, store_result, True)
+
+        if "error" in simulation:
+            raise HTTPException(status_code=400, detail=str(simulation))
+
+        force_refresh = False
+        explanation = ""
+        async for item in explain_txs(simulation, request.network_id, request.system, request.model, request.max_tokens, request.temperature, store_result, force_refresh):
+            explanation += item
+
+        return explanation
+
+    except HTTPException as e:
+        raise e
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=str(e))     
 
 @app.post("/v1/transaction/categorize")
 async def post_categorize_transaction(request: CategorizationRequest, authorization: HTTPAuthorizationCredentials = Depends(auth_scheme)):
