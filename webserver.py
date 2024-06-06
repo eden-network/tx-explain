@@ -57,6 +57,15 @@ DEFAULT_SYSTEM_PROMPT = None
 RECAPTCHA_TIMEOUT = int(os.getenv('RECAPTCHA_TIMEOUT', 3))
 RECAPTCHA_SECRET_KEY = os.getenv('RECAPTCHA_SECRET_KEY', '')
 
+network_endpoints = {
+            '1': (os.getenv('ETH_RPC_ENDPOINT'), 'ethereum'),
+            '42161': (os.getenv('ARB_RPC_ENDPOINT'), 'arbitrum'),
+            '10': (os.getenv('OP_RPC_ENDPOINT'), 'optimism'),
+            '43114': ('https://api.avax.network/ext/bc/C/rpc', 'avalanche'),
+            '8453': ('https://base.llamarpc.com', 'base'),
+            '81467': ('https://rpc.blast.io', 'blast'),
+            '5000': ('https://rpc.mantle.xyz', 'mantle')
+        }
 
 with open('system_prompt.txt', 'r') as file:
     DEFAULT_SYSTEM_PROMPT = file.read()
