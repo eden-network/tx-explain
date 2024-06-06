@@ -20,6 +20,8 @@ from dotenv import load_dotenv
 from typing import List, Optional, Any
 from pydantic import BaseModel, Field, validator
 from tenacity import retry, stop_after_attempt, wait_exponential
+from categorize import categorize  # Import categorize function
+import time
 
 load_dotenv()
 
@@ -60,14 +62,18 @@ network_endpoints = {
             '42161': (os.getenv('ARB_RPC_ENDPOINT'), 'arbitrum'),
             '10': (os.getenv('OP_RPC_ENDPOINT'), 'optimism'),
             '43114': ('https://api.avax.network/ext/bc/C/rpc', 'avalanche'),
-            '8453': ('https://base.llamarpc.com	', 'base'),
+            '8453': ('https://base.llamarpc.com', 'base'),
             '81467': ('https://rpc.blast.io', 'blast'),
             '5000': ('https://rpc.mantle.xyz', 'mantle')
         }
 
-
 with open('system_prompt.txt', 'r') as file:
     DEFAULT_SYSTEM_PROMPT = file.read()
+
+class CategorizationRequest(BaseModel):
+    tx_hash: str
+    network_id: str
+    recaptcha_token: str
 
 class Transaction(BaseModel):
     hash: str
@@ -148,7 +154,7 @@ class FeedbackForm(BaseModel):
     comments: str
     accuracy: int = Field(gt=0, lt=6)  # Ensures accuracy is between 1 and 5
     quality: int = Field(gt=0, lt=6)  # Ensures quality is between 1 and 5
-    explorer: Optional[str] = None  # Will be set based on network and txHash
+    explorer: Optional[str] = None  # Will be set based on network and txHash,
 
 
     @validator('explorer', pre=True, always=True)
@@ -496,9 +502,19 @@ async def simulate_pending_transaction(request: PendingTransactionRequest, _: st
         raise e
     except Exception as e:
         raise HTTPException(status_code=400, detail=str(e))
-
-
-
+    
+@app.post("/v1/feedback")
+async def submit_feedback(feedback: FeedbackForm):
+    try:
+        msg = {
+            "action": "feedbackSubmitted",
+            "feedback": feedback.dict()
+        }
+        print(json.dumps(msg))
+        await submit_feedback_with_retry(feedback)
+        return {"message": "Feedback submitted successfully"}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to submit feedback: {str(e)}")
 
 # ---------------------------------------------------------------------------
 # No data storing
@@ -563,18 +579,42 @@ async def simulate_for_snap(request: SnapRequest, _: str = Depends(authenticate)
     except Exception as e:
         raise HTTPException(status_code=400, detail=str(e))     
 
-@app.post("/v1/feedback")
-async def submit_feedback(feedback: FeedbackForm):
+@app.post("/v1/transaction/categorize")
+async def post_categorize_transaction(request: CategorizationRequest, authorization: HTTPAuthorizationCredentials = Depends(auth_scheme)):
     try:
+        tx_hash = request.tx_hash
+        network_id = request.network_id
+        if not tx_hash:
+            raise HTTPException(status_code=400, detail="Transaction hash is required")
+        if not network_id:
+            raise HTTPException(status_code=400, detail='Missing network ID')
+
+        global network_endpoints
+
+        if network_id not in network_endpoints:
+            raise HTTPException(status_code=400, detail='Unsupported network ID')
+
         msg = {
-            "action": "feedbackSubmitted",
-            "feedback": feedback.dict()
-        }
+                "action": "categorize",
+                "txHash": request.tx_hash,
+                "network": network_endpoints[request.network_id][1]
+            }
         print(json.dumps(msg))
-        await submit_feedback_with_retry(feedback)
-        return {"message": "Feedback submitted successfully"}
+        network = network_endpoints[request.network_id][1]
+        rpc_endpoint = network_endpoints[request.network_id][0]
+        print("Network in categorize: ", network, rpc_endpoint)
+    
+        if not await verify_recaptcha(request.recaptcha_token):
+            raise HTTPException(status_code=401, detail="Invalid reCAPTCHA token")
+    
+        # Call the categorize function and get the result
+        categorize_result = await categorize(tx_hash, network, rpc_endpoint)
+    
+        return categorize_result
+    except HTTPException as e:
+        raise e
     except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Failed to submit feedback: {str(e)}")
+        raise HTTPException(status_code=400, detail=str(e))  
     
 @app.exception_handler(HTTPException)
 async def http_exception_handler(request: Request, exc: HTTPException):
