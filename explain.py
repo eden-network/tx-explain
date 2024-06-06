@@ -43,7 +43,8 @@ async def get_cached_explanation(tx_hash, network):
         return json.loads(blob.download_as_string())
     return None
 
-async def explain_transaction(client, payload, network='ethereum', system_prompt=None, model="claude-3-haiku-20240307", max_tokens=2000, temperature=0):
+# Added change: A new boolean argument for whether the explanation should be stored in bucket or not. By default, it is set to true.
+async def explain_transaction(client, payload, network='ethereum', system_prompt=None, model="claude-3-haiku-20240307", max_tokens=2000, temperature=0, store_result=True):
     request_params = {
         'model': model,
         'max_tokens': max_tokens,
@@ -72,12 +73,15 @@ async def explain_transaction(client, payload, network='ethereum', system_prompt
                 explanation += word
     except Exception as e:
         print(f"Error streaming explanation: {str(e)}")
-    tx_hash = payload['hash']
-    if explanation and explanation != "" and tx_hash:
-        try:
-            await write_explanation_to_bucket(network, tx_hash, explanation, model)
-        except Exception as e:
-            print(f'Error uploading explanation for {tx_hash}: {str(e)}')
+    
+    if store_result:
+        print("Writing explanation to buckets...")
+        tx_hash = payload.get('hash')
+        if explanation and tx_hash:
+            try:
+                await write_explanation_to_bucket(network, tx_hash, explanation, model)
+            except Exception as e:
+                print(f'Error uploading explanation for {tx_hash}: {str(e)}')
 
 async def write_explanation_to_bucket(network, tx_hash, explanation, model):
     file_path = f'{network}/transactions/explanations/{tx_hash}.json'
