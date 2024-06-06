@@ -582,6 +582,10 @@ async def simulate_for_snap(request: SnapRequest, _: str = Depends(authenticate)
 @app.post("/v1/transaction/categorize")
 async def post_categorize_transaction(request: CategorizationRequest, authorization: HTTPAuthorizationCredentials = Depends(auth_scheme)):
     try:
+        is_human = await verify_recaptcha(request.recaptcha_token)
+        if not is_human:
+            raise HTTPException(status_code=400, detail="Bot detected")
+
         tx_hash = request.tx_hash
         network_id = request.network_id
         if not tx_hash:
