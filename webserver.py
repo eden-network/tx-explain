@@ -122,10 +122,6 @@ class SnapRequest(BaseModel):
     value: str
     input: str
     transaction_index: int
-    system: str = DEFAULT_SYSTEM_PROMPT
-    model: str = DEFAULT_MODEL
-    max_tokens: int = DEFAULT_MAX_TOKENS
-    temperature: float = DEFAULT_TEMPERATURE
 
 class SimulateTransactionsRequest(BaseModel):
     transactions: list[Transaction]
@@ -541,13 +537,6 @@ async def simulate_for_snap(request: SnapRequest, _: str = Depends(authenticate)
         print(json.dumps(msg))
         url, network_name = network_endpoints[network_id]
 
-        body = {
-            "id": 1,
-            "jsonrpc": "2.0",
-            "method": "eth_getTransactionByHash",
-            "params": [request.tx_hash]
-        }
-
         transaction = Transaction(
             hash=request.tx_hash,
             block_number=request.block_number,
@@ -569,7 +558,7 @@ async def simulate_for_snap(request: SnapRequest, _: str = Depends(authenticate)
 
         force_refresh = False
         explanation = ""
-        async for item in explain_txs(simulation, request.network_id, request.system, request.model, request.max_tokens, request.temperature, store_result, force_refresh):
+        async for item in explain_txs(simulation, request.network_id, DEFAULT_SYSTEM_PROMPT, DEFAULT_MODEL, DEFAULT_MAX_TOKENS, DEFAULT_TEMPERATURE, store_result, force_refresh):
             explanation += item
 
         return explanation
