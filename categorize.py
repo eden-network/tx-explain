@@ -112,7 +112,7 @@ async def augment_summary (tx_summary, tx_tenderly_object, transaction_hash, web
 # Formatting the system prompt template with config files
 def prompt_structured_3 (label_list, probability_config, tx_summary, res_format):
     try:
-        system_prompt_file = os.environ.get("CATEGORIZATION_SYSTEM_PROMPT_FILE")
+        system_prompt_file = 'categorization_config/system_prompt_template.txt'
         with open(system_prompt_file, 'r') as file:
             system_prompt_template = file.read()
 
@@ -139,10 +139,10 @@ async def classify_tx (transaction, simulation, explanation, network, rpc_endpoi
 
     # Load environment variables
     GROQ_API_KEY = os.environ.get("GROQ_API_KEY")
-    LABELS_FILE_PATH = os.environ.get("LABELS_FILE_PATH")
-    PROBABILITY_CONFIG_PATH = os.environ.get("PROBABILITY_CONFIG_PATH")
-    OUTPUT_FORMAT_PATH = os.environ.get("OUTPUT_FORMAT_PATH")
-    MODEL = os.environ.get("CATEGORIZATION_MODEL")
+    LABELS_FILE_PATH = 'categorization_config/ultrasound_labels.json'
+    PROBABILITY_CONFIG_PATH = 'categorization_config/probability_config.json'
+    OUTPUT_FORMAT_PATH = 'categorization_config/res_format.json'
+    MODEL = 'llama3-70b-8192'
     #ETH_RPC_ENDPOINT = os.environ.get("ETH_RPC_ENDPOINT")
 
     flipside_api_key = os.getenv('FLIPSIDE_API_KEY')
