@@ -2,7 +2,8 @@ import json
 import re
 from flipside import Flipside
 import pandas as pd
-
+import aiohttp
+import asyncio
 
 # Recursively iterate over the json object looking for specified pattern
 def explore_json(obj, items, pattern):
@@ -29,32 +30,49 @@ def extract(json_obj, pattern = None):
         explore_json(json_obj, items, pattern)
         unique_items = list(set(items))
         return unique_items
-    
     except Exception as e:
         print("extract error: ", e)
 
 
 # Make the addresses into a string that will be used in the flipside query
-def format (addresses):
-    addresses_str = ', '.join([f"'{address}'" for address in addresses if address])
-    return addresses_str
+def addresses_to_string (addresses):
+    try:
+        addresses_str = ', '.join([f"'{address}'" for address in addresses if address])
+        return addresses_str
+    except Exception as e:
+        print("Error at format: ", e)
+        return None
 
 
 # Query Flipside
-def query_flipside (addresses_str, endpoint):
-    sql = f"""
-        select address,
-            address_name,
-            label,
-            label_type,
-            label_subtype
-        from ethereum.core.dim_labels 
-        where lower(address) in ({addresses_str})
-        """
-
-    query_result_set = endpoint.query(sql)
-    df = pd.DataFrame(query_result_set)
-    return df
+def query_flipside (addresses_str, endpoint, network):
+    try:
+        if network == 'ethereum':
+            sql = f"""
+                select address,
+                    address_name,
+                    label,
+                    label_type,
+                    label_subtype
+                from ethereum.core.dim_labels 
+                where lower(address) in ({addresses_str})
+                """
+        else:
+            sql = f"""
+                select address,
+                    address_name,
+                    project_name as label,
+                    label_type,
+                    label_subtype
+                from {network}.core.dim_labels 
+                where lower(address) in ({addresses_str})
+                """
+        query_result_set = endpoint.query(sql)
+        df = pd.DataFrame(query_result_set)
+        return df
+    except Exception as e:
+        print("Error at query_flipside: ", e)
+        return None
 
 # Put results into a json object
 def to_json(df):
@@ -80,25 +98,24 @@ def to_json(df):
         print("Error at to_json: ", e)
 
 # Fetch address labels
-def fetch_address_labels(sim_data, endpoint):
+def fetch_address_labels(sim_data, endpoint, network):
     address_regex = r'^0x[0-9a-fA-F]{40}$'
     try:
         addresses = extract(sim_data, address_regex)
-        addresses_str = format(addresses)
-        labels_data = query_flipside(addresses_str,endpoint)
+        addresses_str = addresses_to_string(addresses)
+        labels_data = query_flipside(addresses_str,endpoint, network)
         labels_json = to_json(labels_data)
         return labels_json
     except Exception as e:
         print("Error at fetch_address_labels: ", e)
 
 # Add address labels to the original sim_data
-def add_labels(sim_data, endpoint):
+def add_labels(sim_data, endpoint, network):
     try:
-        labels_json = json.loads(fetch_address_labels(sim_data, endpoint))
+        labels_json = json.loads(fetch_address_labels(sim_data, endpoint, network))
         for key, value in labels_json.items():
             sim_data[key] = value
         
         return sim_data
     except Exception as e:
         print("Error at add_labels: ", e)
-
