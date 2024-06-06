@@ -90,8 +90,10 @@ async def augment_summary (tx_summary, tx_tenderly_object, transaction_hash, web
             tx_mev_status = ""
 
         # Augmenting for contract names
-
-        contract_labels_json = fetch_address_labels(tx_tenderly_object, flipside, network)
+        if network != "mantle": # Flipside doesn't support mantle labels
+            contract_labels_json = fetch_address_labels(tx_tenderly_object, flipside, network)
+        else:
+            contract_labels_json = ""
         tx_summary_tagged = tx_summary + str(contract_labels_json)
 
         # Augmenting for functions called
