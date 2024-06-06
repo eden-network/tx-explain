@@ -593,12 +593,12 @@ async def post_categorize_transaction(request: CategorizationRequest, authorizat
                 "network": network_endpoints[request.network_id][1]
             }
         print(json.dumps(msg))
+        
         network = network_endpoints[request.network_id][1]
         rpc_endpoint = network_endpoints[request.network_id][0]
-        print("Network in categorize: ", network, rpc_endpoint)
     
-        if not await verify_recaptcha(request.recaptcha_token):
-            raise HTTPException(status_code=401, detail="Invalid reCAPTCHA token")
+        #if not await verify_recaptcha(request.recaptcha_token):
+        #    raise HTTPException(status_code=401, detail="Invalid reCAPTCHA token")
     
         # Call the categorize function and get the result
         categorize_result = await categorize(tx_hash, network, rpc_endpoint)
