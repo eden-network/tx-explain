@@ -5,6 +5,7 @@ import argparse
 from datetime import datetime
 from dotenv import load_dotenv
 from anthropic import AsyncAnthropic
+from groq import AsyncGroq
 from google.cloud import storage
 
 load_dotenv()  # Load environment variables from .env file
