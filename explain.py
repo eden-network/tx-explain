@@ -44,71 +44,47 @@ async def get_cached_explanation(tx_hash, network):
         return json.loads(blob.download_as_string())
     return None
 
-async def explain_transaction(client, payload, network='ethereum', system_prompt=None, model="claude-3-haiku-20240307", max_tokens=2000, temperature=0):
-    if model=="llama3-70b-8192":
-        explanation=""
-        try:
-            chat_completion = await client.chat.completions.create(
-                messages=[
-                {
-                    "role": "system",
-                    "content": system_prompt    
-                },
-                {
-                    "role": "user",
-                    "content":  json.dumps(payload)
-                }
-                    ],
-                    model=model,
-                    temperature=temperature,
-                    max_tokens=max_tokens
-            )
-            explanation=chat_completion.choices[0].message.content
-        except Exception as e:
-            print(f"Error streaming explanation: {str(e)}")
-    tx_hash = payload['hash']
-    if explanation and explanation != "" and tx_hash:
-        try:
-            await write_explanation_to_bucket(network, tx_hash, explanation, model)
-        except Exception as e:
-            print(f'Error uploading explanation for {tx_hash}: {str(e)}')
-        
 
-    else:
-        request_params = {
-            'model': model,
-            'max_tokens': max_tokens,
-            'temperature': temperature,
-            'messages': [
-                {
-                    "role": "user",
-                    "content": [
-                        {
-                            "type": "text",
-                            "text": json.dumps(payload)
-                        }
-                    ]
-                }
-            ]
-        }
+# Added change: A new boolean argument for whether the explanation should be stored in bucket or not. By default, it is set to true.
+async def explain_transaction(client, payload, network='ethereum', system_prompt=None, model="claude-3-haiku-20240307", max_tokens=2000, temperature=0, store_result=True):
+    request_params = {
+        'model': model,
+        'max_tokens': max_tokens,
+        'temperature': temperature,
+        'messages': [
+            {
+                "role": "user",
+                "content": [
+                    {
+                        "type": "text",
+                        "text": json.dumps(payload)
+                    }
+                ]
+            }
+        ]
+    }
 
-        if system_prompt:
-            request_params['system'] = system_prompt
+    if system_prompt:
+        request_params['system'] = system_prompt
 
-        explanation = ""
-        try:
-            async with client.messages.stream(**request_params) as stream:
-                async for word in stream.text_stream:
-                    yield word
-                    explanation += word
-        except Exception as e:
-            print(f"Error streaming explanation: {str(e)}")
-    tx_hash = payload['hash']
-    if explanation and explanation != "" and tx_hash:
-        try:
-            await write_explanation_to_bucket(network, tx_hash, explanation, model)
-        except Exception as e:
-            print(f'Error uploading explanation for {tx_hash}: {str(e)}')
+    explanation = ""
+    try:
+        async with client.messages.stream(**request_params) as stream:
+            async for word in stream.text_stream:
+                yield word
+                explanation += word
+    except Exception as e:
+        print(f"Error streaming explanation: {str(e)}")
+    
+    if store_result:
+        print("Writing explanation to buckets...")
+        tx_hash = payload.get('hash')
+        if explanation and tx_hash:
+            try:
+                await write_explanation_to_bucket(network, tx_hash, explanation, model)
+            except Exception as e:
+                print(f'Error uploading explanation for {tx_hash}: {str(e)}')
+
 
 async def write_explanation_to_bucket(network, tx_hash, explanation, model):
     file_path = f'{network}/transactions/explanations/{tx_hash}.json'
