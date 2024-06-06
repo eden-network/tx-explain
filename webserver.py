@@ -581,40 +581,40 @@ async def simulate_for_snap(request: SnapRequest, _: str = Depends(authenticate)
 
 @app.post("/v1/transaction/categorize")
 async def post_categorize_transaction(request: CategorizationRequest, authorization: HTTPAuthorizationCredentials = Depends(auth_scheme)):
-    tx_hash = request.tx_hash
-    network_id = request.network_id
-    if not tx_hash:
-        raise HTTPException(status_code=400, detail="Transaction hash is required")
-    if not network_id:
+    try:
+        tx_hash = request.tx_hash
+        network_id = request.network_id
+        if not tx_hash:
+            raise HTTPException(status_code=400, detail="Transaction hash is required")
+        if not network_id:
             raise HTTPException(status_code=400, detail='Missing network ID')
 
-    network_endpoints = {
-            '1': (os.getenv('ETH_RPC_ENDPOINT'), 'ethereum'),
-            '42161': (os.getenv('ARB_RPC_ENDPOINT'), 'arbitrum'),
-            '10': (os.getenv('OP_RPC_ENDPOINT'), 'optimism'),
-            '43114': ('https://api.avax.network/ext/bc/C/rpc', 'avalanche')
-        }
+        global network_endpoints
 
-    if network_id not in network_endpoints:
+        if network_id not in network_endpoints:
             raise HTTPException(status_code=400, detail='Unsupported network ID')
 
-    msg = {
-            "action": "categorize",
-            "txHash": request.tx_hash,
-            "network": network_endpoints[request.network_id][1]
-        }
-    print(json.dumps(msg))
-    network = network_endpoints[request.network_id][1]
-    rpc_endpoint = network_endpoints[request.network_id][0]
-    print("Network in categorize: ", network, rpc_endpoint)
+        msg = {
+                "action": "categorize",
+                "txHash": request.tx_hash,
+                "network": network_endpoints[request.network_id][1]
+            }
+        print(json.dumps(msg))
+        network = network_endpoints[request.network_id][1]
+        rpc_endpoint = network_endpoints[request.network_id][0]
+        print("Network in categorize: ", network, rpc_endpoint)
     
-    if not await verify_recaptcha(request.recaptcha_token):
-        raise HTTPException(status_code=401, detail="Invalid reCAPTCHA token")
+        if not await verify_recaptcha(request.recaptcha_token):
+            raise HTTPException(status_code=401, detail="Invalid reCAPTCHA token")
     
-    # Call the categorize function and get the result
-    categorize_result = await categorize(tx_hash, network, rpc_endpoint)
+        # Call the categorize function and get the result
+        categorize_result = await categorize(tx_hash, network, rpc_endpoint)
     
-    return categorize_result
+        return categorize_result
+    except HTTPException as e:
+        raise e
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=str(e))  
     
 @app.exception_handler(HTTPException)
 async def http_exception_handler(request: Request, exc: HTTPException):
