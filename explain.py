@@ -89,11 +89,11 @@ async def write_explanation_to_bucket(network, tx_hash, explanation, model):
     updated_at = datetime.now().isoformat()
     blob.upload_from_string(json.dumps({'result': explanation, 'model': model, 'updated_at': updated_at}))
 
-async def process_json_file(anthropic_client, file_path, data, network, semaphore, delay_time, system_prompt, model):
+async def process_json_file(async_client, file_path, data, network, semaphore, delay_time, system_prompt, model):
     async with semaphore:
         print(f'Analyzing: {file_path}...')
         explanation = ""
-        async for item in explain_transaction(anthropic_client, data, network=network, system_prompt=system_prompt, model=model):
+        async for item in explain_transaction(async_client, data, network=network, system_prompt=system_prompt, model=model):
             explanation += item
         if explanation and explanation != "":
             tx_hash = data['hash']
