@@ -5,6 +5,7 @@ import argparse
 from datetime import datetime
 from dotenv import load_dotenv
 from anthropic import AsyncAnthropic
+from groq import AsyncGroq
 from google.cloud import storage
 
 load_dotenv()  # Load environment variables from .env file
@@ -43,7 +44,7 @@ async def get_cached_explanation(tx_hash, network):
         return json.loads(blob.download_as_string())
     return None
 
-async def explain_transaction(client, payload, network='ethereum', system_prompt=None, model="claude-3-haiku-20240307", max_tokens=2000, temperature=0):
+async def explain_transaction(client, payload, network='ethereum', system_prompt=None, model="claude-3-haiku-20240307", max_tokens=2000, temperature=0, store_result=True):
     request_params = {
         'model': model,
         'max_tokens': max_tokens,
@@ -72,12 +73,15 @@ async def explain_transaction(client, payload, network='ethereum', system_prompt
                 explanation += word
     except Exception as e:
         print(f"Error streaming explanation: {str(e)}")
-    tx_hash = payload['hash']
-    if explanation and explanation != "" and tx_hash:
-        try:
-            await write_explanation_to_bucket(network, tx_hash, explanation, model)
-        except Exception as e:
-            print(f'Error uploading explanation for {tx_hash}: {str(e)}')
+    
+    if store_result:
+        print("Writing explanation to buckets...")
+        tx_hash = payload.get('hash')
+        if explanation and tx_hash:
+            try:
+                await write_explanation_to_bucket(network, tx_hash, explanation, model)
+            except Exception as e:
+                print(f'Error uploading explanation for {tx_hash}: {str(e)}')
 
 async def write_explanation_to_bucket(network, tx_hash, explanation, model):
     file_path = f'{network}/transactions/explanations/{tx_hash}.json'
@@ -85,11 +89,11 @@ async def write_explanation_to_bucket(network, tx_hash, explanation, model):
     updated_at = datetime.now().isoformat()
     blob.upload_from_string(json.dumps({'result': explanation, 'model': model, 'updated_at': updated_at}))
 
-async def process_json_file(anthropic_client, file_path, data, network, semaphore, delay_time, system_prompt, model):
+async def process_json_file(async_client, file_path, data, network, semaphore, delay_time, system_prompt, model):
     async with semaphore:
         print(f'Analyzing: {file_path}...')
         explanation = ""
-        async for item in explain_transaction(anthropic_client, data, network=network, system_prompt=system_prompt, model=model):
+        async for item in explain_transaction(async_client, data, network=network, system_prompt=system_prompt, model=model):
             explanation += item
         if explanation and explanation != "":
             tx_hash = data['hash']
@@ -111,11 +115,28 @@ async def main(network, delay_time, max_concurrent_connections, skip_function_ca
     
     api_key = os.getenv('ANTHROPIC_API_KEY')
     anthropic_client = AsyncAnthropic(api_key=api_key)
+    api_key_groq = os.getenv('GROQ_API_KEY')
+    groq_client = AsyncGroq(api_key=api_key_groq)
     semaphore = asyncio.Semaphore(max_concurrent_connections)
     
     tasks = []
+    models={
+        "llama3-70b-8192":"groq",
+        "llama3-8b-8192":"groq",
+        "mixtral-8x7b-32768":"groq",
+        "gemma-7b-it":"groq",
+        "claude-3-haiku-20240307":"anthropic",
+        "claude-3-opus-20240229":"anthropic",
+        "claude-3-sonnet-20240229":"anthropic",
+    }
     for file_path, data in json_data:
-        task = asyncio.create_task(process_json_file(anthropic_client, file_path, data, network, semaphore, delay_time, system_prompt, model))
+        if models[model]=="groq":
+            task = asyncio.create_task(process_json_file(groq_client, file_path, data, network, semaphore, delay_time, system_prompt, model))
+        elif models[model]=="anthropic":
+            task = asyncio.create_task(process_json_file(anthropic_client, file_path, data, network, semaphore, delay_time, system_prompt, model))
+        else:
+            #Assume there is new model that was not added to models list, use Anthropic client by default
+            task = asyncio.create_task(process_json_file(anthropic_client, file_path, data, network, semaphore, delay_time, system_prompt, model))
         tasks.append(task)
     
     await asyncio.gather(*tasks)

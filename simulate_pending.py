@@ -238,7 +238,7 @@ async def fetch_tenderly_simulation(tx_details, tenderly_account_slug, tenderly_
     ) as response:
         return await response.json()
 
-async def simulate_pending_transaction_tenderly(tx_hash, block_number, from_address, to_address, gas, value, input_data, tx_index, network):
+async def simulate_pending_transaction_tenderly(tx_hash, block_number, from_address, to_address, gas, value, input_data, tx_index, network, store_result=True):
     tenderly_account_slug = os.getenv('TENDERLY_ACCOUNT_SLUG')
     tenderly_project_slug = os.getenv('TENDERLY_PROJECT_SLUG')
     tenderly_access_key = os.getenv('TENDERLY_ACCESS_KEY')
@@ -262,30 +262,34 @@ async def simulate_pending_transaction_tenderly(tx_hash, block_number, from_addr
         logging.info(f'Simulating transaction: {tx_hash}')
 
         sim_data = await fetch_tenderly_simulation(tx_details, tenderly_account_slug, tenderly_project_slug, tenderly_access_key, session)
-        print (sim_data)
+        print(sim_data)
         if "error" in sim_data:
-            return (sim_data)
+            return sim_data
         if sim_data and 'transaction' in sim_data:
             sim_data['transaction']['hash'] = tx_hash
             if 'transaction_info' in sim_data['transaction']:
                 sim_data['transaction']['transaction_info']['transaction_id'] = tx_hash
                 if 'call_trace' in sim_data['transaction']['transaction_info']:
                     sim_data['transaction']['transaction_info']['call_trace']['hash'] = tx_hash
-            try:
-                blob = bucket.blob(f'{network}/transactions/simulations/full/{tx_hash}.json')
-                blob.upload_from_string(json.dumps(sim_data))
-                logging.info(f'{tx_hash} full simulation written successfully to bucket')
-            except Exception as e:
-                logging.error(f'Error uploading full simulation for {tx_hash}: {str(e)}')
+            
+            if store_result:
+                print("Storing the full simulation to bucket...")
+                try:
+                    blob = bucket.blob(f'{network}/transactions/simulations/full/{tx_hash}.json')
+                    blob.upload_from_string(json.dumps(sim_data))
+                    logging.info(f'{tx_hash} full simulation written successfully to bucket')
+                except Exception as e:
+                    logging.error(f'Error uploading full simulation for {tx_hash}: {str(e)}')
+
             trimmed = await extract_useful_fields(sim_data)
-            # trimmed_logs_applied = await apply_logs(trimmed_decimals)
-            # trimmed = add_labels(trimmed_logs_applied, flipside)
-            # trimmed = add_labels(trimmed_initial, flipside)
-            try:
-                blob = bucket.blob(f'{network}/transactions/simulations/trimmed/{tx_hash}.json')
-                blob.upload_from_string(json.dumps(trimmed))
-                logging.info(f'{tx_hash} trimmed simulation written successfully to bucket')
-            except Exception as e:
-                logging.error(f'Error uploading trimmed simulation for {tx_hash}: {str(e)}')
+            
+            if store_result:
+                print("Storing the trimmed simulation to bucket...")
+                try:
+                    blob = bucket.blob(f'{network}/transactions/simulations/trimmed/{tx_hash}.json')
+                    blob.upload_from_string(json.dumps(trimmed))
+                    logging.info(f'{tx_hash} trimmed simulation written successfully to bucket')
+                except Exception as e:
+                    logging.error(f'Error uploading trimmed simulation for {tx_hash}: {str(e)}')
             return trimmed
     return None

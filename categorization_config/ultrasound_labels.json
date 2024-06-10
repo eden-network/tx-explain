@@ -1,0 +1,89 @@
+[
+    {
+        "label": "Defi",
+        "weight": 0.4,
+        "explanation": [
+            "Transactions summary is related to decentralized finance (DeFi) activities.",
+            "Involves swapping tokens or assets within DeFi protocols.",
+            "May include interactions with decentralized exchanges (DEXs) or lending platforms."
+        ]
+    },
+    {
+        "label": "ETH transfers",
+        "weight": 0.1,
+        "explanation": [
+            "Transaction summary deals with direct transfers of native ETH token between the addresses.",
+            "This excludes the transfers of other tokens"
+        ]
+    },
+    {
+        "label": "ERC-20 token transfers",
+        "weight": 0.1,
+        "explanation": [
+            "Transaction summary deals with various ERC-20 token transfers between the addresses.",
+            "ERC-20 tokens are distinguished from both native ETH transfers, and from NFT token transfers."
+        ]
+    },
+    {
+        "label": "NFTs",
+        "weight": 0.2,
+        "explanation": [
+            "Transactions involving Non-Fungible Tokens (NFTs), unique digital assets.",
+            "When an asset is an NFT, it is always traded in quantities of 1.",
+            "Associated words: ERC-721, Non-fungible token"
+        ]
+    },
+    {
+        "label": "Misc",
+        "weight": 0.4,
+        "explanation": [
+            "Transaction summary that does not fit into any of the other specific categories.",
+            "This label is applicable only in cases when none of the other provided labels can explain the summary better.",
+            "You can also use this label when you are not entirely sure where to put a summary.",
+            "Avoid using this label, unless it is really necessary."
+        ]
+    },
+    {
+        "label": "L2",
+        "weight": 0.9,
+        "explanation": [
+            "Transaction summary related to Layer 2 bridging on Ethereum.",
+            "Summaries that belong to the L2 class must clearly mention Layer 2 or bridging or contracts related to that.",
+            "AT LEAST one of the address_tags has to explicitly be bridge, bridged, layer 2, or something similar. If there are no tags like this, this label is NOT applicable.",
+            "Summaries containing mentions of different routers do not imply the summary refers to L2 transaction"
+        ]
+    },
+    {
+        "label": "MEV",
+        "weight": 1.0,
+        "explanation": [
+            "Transactions involving Miner Extractable Value (MEV), capturing value by reordering transactions.",
+            "A clear indicator of whether a transaction is MEV or not can be found in the 'MEV status' part at the end of the summary"
+        ]
+    },
+    {
+        "label": "New contract deployment",
+        "weight": 0.1,
+        "explanation": [
+            "Transaction summary involving explicit deploying of new contracts.",
+            "A summary with a contract deployment will have it clearly stated.",
+            "'Minting' new tokens is NOT the same as contract creation.",
+            "Minting tokens refers to the process of creating new tokens within an already deployed smart contract. It increases the total supply of tokens and assigns them to specified addresses.",
+            "Example of Minting Tokens: Imagine we have a smart contract for a token named 'XYZToken'. Minting 100 new XYZTokens means adding these tokens to the existing supply and assigning them to a user’s wallet, all within the framework of the already deployed XYZToken contract.",
+            "Deploying a new contract involves writing and uploading a new smart contract code to the blockchain. This action creates a new contract instance with its own address and set of functionalities.",
+            "Example of Deploying a New Contract: Deploying a new contract is like launching a new project on the blockchain. For instance, creating and deploying a new smart contract called 'ABCContract' will result in a new contract with its own address and set of rules. It is a separate entity from any existing contracts.",
+            "I reiterate: Minting new tokens is NOT the same as contract deployment.",
+            "Example of a transaction summary that does NOT belong to this category: 'Contract xyz has minted 100 new tokens.'",
+            "Example of a transaction summary that does belong to this category: 'Contract xyz has created/deployed contract abc'"
+        ]
+    },
+    {
+        "label": "Blob transaction",
+        "weight": 1.0,
+        "explanation": [
+            "Transactions summary is related to fees paid in exchange for data storage or computational resources.",
+            "In the summary, there is a data field specifying the Transaction type. If Transaction type: 3, it is a Blob transaction.",
+            "Additionally, it will be stated in the summary of the transaction is of the Blob type."
+        ]
+    }
+]
