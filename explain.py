@@ -83,6 +83,47 @@ async def explain_transaction(client, payload, network='ethereum', system_prompt
             except Exception as e:
                 print(f'Error uploading explanation for {tx_hash}: {str(e)}')
 
+async def chat(client, payload, network, system_prompt, model="claude-3-haiku-20240307", max_tokens=2000, temperature=0):
+    request_params = {
+        'model': model,
+        'max_tokens': max_tokens,
+        'temperature': temperature,
+        'messages': [
+            {
+                "role": "user",
+                "content": [
+                    {
+                        "type": "text",
+                        "text": json.dumps(payload)
+                    }
+                ]
+            }
+        ]
+    }
+
+    response = ""
+    try:
+        async with client.messages.stream(**request_params) as stream:
+            async for item in stream:
+                usage = item.message.usage if hasattr(item, 'message') and hasattr(item.message, 'usage') else None
+                usage = usage.input_tokens
+                async for word in stream.text_stream:
+                    yield word, usage
+                    response += word
+    except Exception as e:
+        print(f"Error streaming response: {str(e)}")
+
+    tx_hash = payload.get('transaction_details', {}).get('hash')
+    payload["conversation"].append({"role": "assistant", "content": response})
+    if response and tx_hash:
+        print("Writing chat to buckets...")
+        try:
+            file_path = f'{network}/transactions/chat_logs/{tx_hash}.json'
+            blob = bucket.blob(file_path)
+            blob.upload_from_string(json.dumps(payload, indent = 4))
+        except Exception as e:
+            print(f'Error uploading chat for {tx_hash}: {str(e)}')
+
 async def write_explanation_to_bucket(network, tx_hash, explanation, model):
     file_path = f'{network}/transactions/explanations/{tx_hash}.json'
     blob = bucket.blob(file_path)

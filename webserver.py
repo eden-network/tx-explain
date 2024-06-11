@@ -13,7 +13,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse, StreamingResponse
 from anthropic import AsyncAnthropic
 from google.cloud import storage
-from explain import explain_transaction, get_cached_explanation
+from explain import explain_transaction, get_cached_explanation, chat
 from simulate import simulate_transaction, get_cached_simulation
 from simulate_pending import simulate_pending_transaction_tenderly
 from dotenv import load_dotenv
@@ -54,6 +54,7 @@ DEFAULT_MODEL = os.getenv('DEFAULT_MODEL')
 DEFAULT_MAX_TOKENS = 2000
 DEFAULT_TEMPERATURE = 0
 DEFAULT_SYSTEM_PROMPT = None
+DEFAULT_CHAT_SYSTEM_PROMPT = None
 RECAPTCHA_TIMEOUT = int(os.getenv('RECAPTCHA_TIMEOUT', 3))
 RECAPTCHA_SECRET_KEY = os.getenv('RECAPTCHA_SECRET_KEY', '')
 
@@ -69,6 +70,9 @@ network_endpoints = {
 
 with open('system_prompt.txt', 'r') as file:
     DEFAULT_SYSTEM_PROMPT = file.read()
+
+with open('chat_system_prompt.txt', 'r') as file:
+    DEFAULT_CHAT_SYSTEM_PROMPT = file.read()
 
 class CategorizationRequest(BaseModel):
     tx_hash: str
@@ -122,6 +126,10 @@ class SnapRequest(BaseModel):
     value: str
     input: str
     transaction_index: int
+
+class ChatRequest(BaseModel):
+    input_json: dict
+    network_id: str
 
 class SimulateTransactionsRequest(BaseModel):
     transactions: list[Transaction]
@@ -299,6 +307,57 @@ async def explain_txs(transactions, network, system_prompt, model, max_tokens, t
                 yield item
         except Exception as e:
             raise HTTPException(status_code=500, detail=f"Error explaining transaction: {str(e)}")
+
+async def reduce_depth(json_obj, max_depth):
+    if not isinstance(json_obj, dict):
+        return json_obj
+    if "calls" in json_obj:
+        if max_depth == 0:
+            del json_obj["calls"]
+        else:
+            json_obj["calls"] = [await reduce_depth(call, max_depth - 1) for call in json_obj["calls"]]
+    return json_obj
+
+async def truncate_json(json_object, key, max_depth):
+    for item in json_object["transaction_details"]["call_trace"]:
+        item[key] = [await reduce_depth(element, max_depth) for element in item[key]]
+    return json_object
+
+async def remove_entries(json_object, num_entries_to_remove):
+    if num_entries_to_remove <= 0:
+        return json_object
+    print("Removing entries...")
+    json_object["conversation"] = json_object["conversation"][num_entries_to_remove:]
+    return json_object
+
+
+async def explain_txs_chat(message, network, system_prompt, model, max_tokens, temperature):
+    message['system_prompt'] = system_prompt
+    message = await truncate_json(message, 'calls', 1)
+    try:
+        async for word, usage in chat(
+            ANTHROPIC_CLIENT, message, network, system_prompt, model=model, max_tokens=max_tokens, temperature=temperature
+        ):
+            yield word
+        print("Usage: ", usage)
+
+    except HTTPException as http_error:
+        if http_error.status_code == 400:
+            message = await remove_entries(message, 4)
+
+            async for word, usage in chat(
+                ANTHROPIC_CLIENT, message, network, model=model, max_tokens=max_tokens, temperature=temperature
+            ):
+                yield word
+        print("Usage: ", usage)
+
+        if http_error.status_code == 500:
+            raise HTTPException(status_code=500, detail=f"Error explaining transaction: {str(http_error)}")
+        else:
+            raise http_error
+
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Error explaining transaction: {str(e)}")
 
 @app.get("/")
 async def root():
