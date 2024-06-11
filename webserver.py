@@ -625,7 +625,34 @@ async def simulate_for_snap(request: SnapRequest, _: str = Depends(authenticate)
     except HTTPException as e:
         raise e
     except Exception as e:
-        raise HTTPException(status_code=400, detail=str(e))     
+        raise HTTPException(status_code=400, detail=str(e))    
+
+
+@app.post("/v1/transaction/chat")
+async def simulate_for_chat(request: ChatRequest, _: str = Depends(authenticate)):
+    try:
+        msg = {
+            "action": "chat",
+            "input": request.input_json,
+            "network": network_endpoints[request.network_id][1]  
+        }
+
+        print(json.dumps(msg))
+
+        chatContent = request.input_json  
+
+        explanation = ""
+        async for word in explain_txs_chat(chatContent,network_endpoints[request.network_id][1], DEFAULT_CHAT_SYSTEM_PROMPT, DEFAULT_MODEL, DEFAULT_MAX_TOKENS, DEFAULT_TEMPERATURE):
+            explanation += word
+
+        # Wrap the explanation in a JSON object
+        return {"output": explanation}
+
+    except HTTPException as e:
+        raise e
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=str(e))   
+    
 
 @app.post("/v1/transaction/categorize")
 async def post_categorize_transaction(request: CategorizationRequest, authorization: HTTPAuthorizationCredentials = Depends(auth_scheme)):
