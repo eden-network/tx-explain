@@ -616,6 +616,9 @@ async def simulate_for_snap(request: SnapRequest, _: str = Depends(authenticate)
 @app.post("/v1/transaction/chat")
 async def simulate_for_chat(request: ChatRequest, _: str = Depends(authenticate)):
     try:
+
+        global network_endpoints
+
         msg = {
             "action": "chat",
             "input": request.input_json,
@@ -626,7 +629,7 @@ async def simulate_for_chat(request: ChatRequest, _: str = Depends(authenticate)
         print(json.dumps(msg))
    
         explanation = ""
-        async for word in explain_txs_chat(request.input_json,network_endpoints[request.network_id][1], request.session_id, DEFAULT_CHAT_SYSTEM_PROMPT, DEFAULT_MODEL, DEFAULT_MAX_TOKENS, DEFAULT_TEMPERATURE):
+        async for word in explain_txs_chat(request.input_json, network_endpoints[request.network_id][1], request.session_id, DEFAULT_CHAT_SYSTEM_PROMPT, DEFAULT_MODEL, DEFAULT_MAX_TOKENS, DEFAULT_TEMPERATURE):
             explanation += word
 
         return {"output": explanation}
