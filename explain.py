@@ -83,26 +83,19 @@ async def explain_transaction(client, payload, network='ethereum', system_prompt
             except Exception as e:
                 print(f'Error uploading explanation for {tx_hash}: {str(e)}')
 
-async def chat(client, payload, network, system_prompt, model="claude-3-haiku-20240307", max_tokens=2000, temperature=0):
-    request_params = {
-        'model': model,
-        'max_tokens': max_tokens,
-        'temperature': temperature,
-        'messages': [
-            {
-                "role": "user",
-                "content": [
-                    {
-                        "type": "text",
-                        "text": json.dumps(payload)
-                    }
-                ]
-            }
-        ]
-    }
+# Removes entries from 'messages'
+async def remove_entries(json_object, num_entries_to_remove):
+    if num_entries_to_remove <= 0:
+        return json_object
 
-    response = ""
+    print("Removing entries...")
+    json_object['messages'] = json_object['messages'][num_entries_to_remove:]
+    return json_object
+
+async def chat(client, message, network, session_id):
+    request_params = message
     try:
+        response = ""
         async with client.messages.stream(**request_params) as stream:
             async for item in stream:
                 usage = item.message.usage if hasattr(item, 'message') and hasattr(item.message, 'usage') else None
@@ -110,19 +103,35 @@ async def chat(client, payload, network, system_prompt, model="claude-3-haiku-20
                 async for word in stream.text_stream:
                     yield word, usage
                     response += word
-    except Exception as e:
-        print(f"Error streaming response: {str(e)}")
 
-    tx_hash = payload.get('transaction_details', {}).get('hash')
-    payload["conversation"].append({"role": "assistant", "content": response})
-    if response and tx_hash:
+    except Exception as e:
+        error_message = str(e)
+        if "prompt is too long" in error_message:
+            response = ""
+            request_params = await remove_entries(request_params, 8)
+
+            async with client.messages.stream(**request_params) as stream:
+                async for item in stream:
+                    usage = item.message.usage if hasattr(item, 'message') and hasattr(item.message, 'usage') else None
+                    usage = usage.input_tokens
+                    async for word in stream.text_stream:
+                        yield word, usage
+                        response += word
+        else:
+            print(f"Error streaming response: {str(e)}")
+
+    message['system'] = json.loads(message['system']) # Back to json
+
+    message["messages"].append({"role": "assistant", "content": [{"type": "text", "text": json.dumps(response)}]})
+    
+    if response:
         print("Writing chat to buckets...")
         try:
-            file_path = f'{network}/transactions/chat_logs/{tx_hash}.json'
+            file_path = f'{network}/transactions/chat_logs/chat_{session_id}.json'
             blob = bucket.blob(file_path)
-            blob.upload_from_string(json.dumps(payload, indent = 4))
+            blob.upload_from_string(json.dumps(message, indent = 4))
         except Exception as e:
-            print(f'Error uploading chat for {tx_hash}: {str(e)}')
+            print(f'Error uploading chat for chat {session_id}: {str(e)}')
 
 async def write_explanation_to_bucket(network, tx_hash, explanation, model):
     file_path = f'{network}/transactions/explanations/{tx_hash}.json'

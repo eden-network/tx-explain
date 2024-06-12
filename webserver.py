@@ -130,6 +130,7 @@ class SnapRequest(BaseModel):
 class ChatRequest(BaseModel):
     input_json: dict
     network_id: str
+    session_id: str
 
 class SimulateTransactionsRequest(BaseModel):
     transactions: list[Transaction]
@@ -308,6 +309,7 @@ async def explain_txs(transactions, network, system_prompt, model, max_tokens, t
         except Exception as e:
             raise HTTPException(status_code=500, detail=f"Error explaining transaction: {str(e)}")
 
+# Reducing json calls depth
 async def reduce_depth(json_obj, max_depth):
     if not isinstance(json_obj, dict):
         return json_obj
@@ -319,42 +321,25 @@ async def reduce_depth(json_obj, max_depth):
     return json_obj
 
 async def truncate_json(json_object, key, max_depth):
-    for item in json_object["transaction_details"]["call_trace"]:
+    for item in json_object['system']["transaction_details"]["call_trace"]:
         item[key] = [await reduce_depth(element, max_depth) for element in item[key]]
     return json_object
 
-async def remove_entries(json_object, num_entries_to_remove):
-    if num_entries_to_remove <= 0:
-        return json_object
-    print("Removing entries...")
-    json_object["conversation"] = json_object["conversation"][num_entries_to_remove:]
-    return json_object
-
-
-async def explain_txs_chat(message, network, system_prompt, model, max_tokens, temperature):
-    message['system_prompt'] = system_prompt
+async def explain_txs_chat(message, network, session_id, system_prompt, model, max_tokens, temperature):
+    # Appending the elements to the template
+    message['model'] = model
+    message['max_tokens'] = max_tokens
+    message['temperature'] = temperature
+    message['system']['system_prompt'] = system_prompt
     message = await truncate_json(message, 'calls', 1)
+    message['system'] = json.dumps(message['system'], indent=4) # Must be a string because Claude demands it
+
     try:
         async for word, usage in chat(
-            ANTHROPIC_CLIENT, message, network, system_prompt, model=model, max_tokens=max_tokens, temperature=temperature
+            ANTHROPIC_CLIENT, message, network, session_id
         ):
             yield word
         print("Usage: ", usage)
-
-    except HTTPException as http_error:
-        if http_error.status_code == 400:
-            message = await remove_entries(message, 4)
-
-            async for word, usage in chat(
-                ANTHROPIC_CLIENT, message, network, model=model, max_tokens=max_tokens, temperature=temperature
-            ):
-                yield word
-        print("Usage: ", usage)
-
-        if http_error.status_code == 500:
-            raise HTTPException(status_code=500, detail=f"Error explaining transaction: {str(http_error)}")
-        else:
-            raise http_error
 
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Error explaining transaction: {str(e)}")
@@ -634,24 +619,22 @@ async def simulate_for_chat(request: ChatRequest, _: str = Depends(authenticate)
         msg = {
             "action": "chat",
             "input": request.input_json,
-            "network": network_endpoints[request.network_id][1]  
+            "network": network_endpoints[request.network_id][1],
+            "session_id": request.session_id  
         }
 
         print(json.dumps(msg))
-
-        chatContent = request.input_json  
-
+   
         explanation = ""
-        async for word in explain_txs_chat(chatContent,network_endpoints[request.network_id][1], DEFAULT_CHAT_SYSTEM_PROMPT, DEFAULT_MODEL, DEFAULT_MAX_TOKENS, DEFAULT_TEMPERATURE):
+        async for word in explain_txs_chat(request.input_json,network_endpoints[request.network_id][1], request.session_id, DEFAULT_CHAT_SYSTEM_PROMPT, DEFAULT_MODEL, DEFAULT_MAX_TOKENS, DEFAULT_TEMPERATURE):
             explanation += word
 
-        # Wrap the explanation in a JSON object
         return {"output": explanation}
 
     except HTTPException as e:
         raise e
     except Exception as e:
-        raise HTTPException(status_code=400, detail=str(e))   
+        raise HTTPException(status_code=400, detail=str(e))       
     
 
 @app.post("/v1/transaction/categorize")
