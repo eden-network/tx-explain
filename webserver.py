@@ -311,19 +311,32 @@ async def explain_txs(transactions, network, system_prompt, model, max_tokens, t
 
 # Reducing json calls depth
 async def reduce_depth(json_obj, max_depth):
-    if not isinstance(json_obj, dict):
+    print("Reducing json")
+    try:
+        if not isinstance(json_obj, dict):
+            return json_obj
+        if "calls" in json_obj:
+            print("Calls found")
+            if max_depth == 0:
+                del json_obj["calls"]
+            else:
+                json_obj["calls"] = [await reduce_depth(call, max_depth - 1) for call in json_obj["calls"]]
         return json_obj
-    if "calls" in json_obj:
-        if max_depth == 0:
-            del json_obj["calls"]
-        else:
-            json_obj["calls"] = [await reduce_depth(call, max_depth - 1) for call in json_obj["calls"]]
-    return json_obj
+    except Exception as e:
+        print("Error at reduce_depth: ", e)
+        return json_obj
 
 async def truncate_json(json_object, key, max_depth):
-    for item in json_object['system']["transaction_details"]["call_trace"]:
-        item[key] = [await reduce_depth(element, max_depth) for element in item[key]]
-    return json_object
+    try:
+        if 'system' in json_object and 'transaction_details' in json_object['system'] and 'call_trace' in json_object['system']['transaction_details']:
+            for item in json_object['system']["transaction_details"]["call_trace"]:
+                if key in item:
+                    item[key] = [await reduce_depth(element, max_depth) for element in item[key]]
+        return json_object
+    except Exception as e:
+        print("Error at truncate_json: ", e)
+        return json_object
+
 
 async def explain_txs_chat(message, network, session_id, system_prompt, model, max_tokens, temperature):
     # Appending the elements to the template
