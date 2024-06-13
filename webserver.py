@@ -640,12 +640,17 @@ async def simulate_for_chat(request: ChatRequest, _: str = Depends(authenticate)
         }
 
         print(json.dumps(msg))
-   
-        explanation = ""
-        async for word in explain_txs_chat(request.input_json, network_endpoints[request.network_id][1], request.session_id, DEFAULT_CHAT_SYSTEM_PROMPT, DEFAULT_MODEL, DEFAULT_MAX_TOKENS, DEFAULT_TEMPERATURE):
-            explanation += word
 
-        return {"output": explanation}
+        #explanation = ""
+        #async for word in explain_txs_chat(request.input_json, network_endpoints[request.network_id][1], request.session_id, DEFAULT_CHAT_SYSTEM_PROMPT, DEFAULT_MODEL, DEFAULT_MAX_TOKENS, DEFAULT_TEMPERATURE):
+        #    explanation += word
+
+        #return {"output": explanation}
+
+        return StreamingResponse(
+            explain_txs_chat(request.input_json, network_endpoints[request.network_id][1], request.session_id, DEFAULT_CHAT_SYSTEM_PROMPT, DEFAULT_MODEL, DEFAULT_MAX_TOKENS, DEFAULT_TEMPERATURE),
+            media_type="text/plain"
+        )
 
     except HTTPException as e:
         raise e
