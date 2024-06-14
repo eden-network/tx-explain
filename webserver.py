@@ -62,10 +62,10 @@ network_endpoints = {
             '1': (os.getenv('ETH_RPC_ENDPOINT'), 'ethereum'),
             '42161': (os.getenv('ARB_RPC_ENDPOINT'), 'arbitrum'),
             '10': (os.getenv('OP_RPC_ENDPOINT'), 'optimism'),
-            '43114': ('https://api.avax.network/ext/bc/C/rpc', 'avalanche'),
-            '8453': ('https://base.llamarpc.com', 'base'),
-            '81467': ('https://rpc.blast.io', 'blast'),
-            '5000': ('https://rpc.mantle.xyz', 'mantle')
+            '43114': (os.getenv('TX_EXPLAIN_AVAX_RPC_ENDPOINT'), 'avalanche'),
+            '8453': (os.getenv('TX_EXPLAIN_BASE_RPC_ENDPOINT'), 'base'),
+            '81467': (os.getenv('TX_EXPLAIN_BLAST_RPC_ENDPOINT'), 'blast'),
+            '5000': (os.getenv('TX_EXPLAIN_MANTLE_RPC_ENDPOINT'), 'mantle')
         }
 
 with open('system_prompt.txt', 'r') as file:
