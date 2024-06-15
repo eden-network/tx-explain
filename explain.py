@@ -83,17 +83,59 @@ async def explain_transaction(client, payload, network='ethereum', system_prompt
             except Exception as e:
                 print(f'Error uploading explanation for {tx_hash}: {str(e)}')
 
+# Add and remove constraints from user messages
+def add_constraint(messages, constraint):
+    try:
+        if messages and messages[-1]['role'] == 'user':
+            latest_user_message = messages[-1]['content']
+            for item in latest_user_message:
+                if item['type'] == 'text':
+                    item['text'] += f" {constraint}"
+                    break
+        return messages
+    except Exception as e:
+        print("Error at add_constraint: ", e)
+
+def remove_constraint(messages, constraint):
+    try:
+        if messages and messages[-1]['role'] == 'user':
+            latest_user_message = messages[-1]['content']
+            for item in latest_user_message:
+                if item['type'] == 'text' and item['text'].endswith(f" {constraint}"):
+                    item['text'] = item['text'][:-len(f" {constraint}")]
+                    break
+        return messages
+    except Exception as e:
+        print("Error at remove_constraint: ", e)
+
 # Removes entries from 'messages'
 async def remove_entries(json_object, num_entries_to_remove):
-    if num_entries_to_remove <= 0:
+    try:
+        if num_entries_to_remove <= 0:
+            return json_object
+
+        print("Removing entries...")
+        json_object['messages'] = json_object['messages'][num_entries_to_remove:]
         return json_object
+    except Exception as e:
+        print("Error at remove_entries: ", e)
 
-    print("Removing entries...")
-    json_object['messages'] = json_object['messages'][num_entries_to_remove:]
-    return json_object
+async def chat(client, request_params, network, session_id):
 
-async def chat(client, message, network, session_id):
-    request_params = message
+    # Adding message constraint
+    constraint = """
+                Conversation constraint:
+                You are not permitted to discuss or answer any questions completely unrelated to the provided transaction or blockchain technology.
+                - You absolutely cannot answer any questions about general knowledge topics like geography, history, 
+                    popular culture, etc. unless directly relevant to blockchain technology or explaining the transaction.
+                - If the user asks a question unrelated to the transaction details or blockchain, you must respond with the following and nothing else:
+                    "Sorry, I can only assist you with questions directly related to the provided transaction details or general blockchain concepts. 
+                    For example, I could explain gas fees, smart contracts, or consensus mechanisms if relevant to this transaction. 
+                    But I cannot answer questions unrelated to blockchain technology. 
+                    Is there anything else about this transaction you would like to know?"
+                """
+    request_params['messages'] = add_constraint(request_params['messages'], constraint)
+
     try:
         response = ""
         async with client.messages.stream(**request_params) as stream:
@@ -117,21 +159,26 @@ async def chat(client, message, network, session_id):
                     async for word in stream.text_stream:
                         yield word, usage
                         response += word
-        else:
-            print(f"Error streaming response: {str(e)}")
+            
+    except Exception as e:
+        print(f"Error streaming response: {str(e)}")
 
-    message['system'] = json.loads(message['system']) # Back to json
+    # Removing message constraint
+    request_params['messages'] = remove_constraint(request_params['messages'], constraint)
 
-    message["messages"].append({"role": "assistant", "content": [{"type": "text", "text": json.dumps(response)}]})
+    request_params['system'] = json.loads(request_params['system']) # Back to json
+
+    request_params["messages"].append({"role": "assistant", "content": [{"type": "text", "text": json.dumps(response)}]})
     
     if response:
         print("Writing chat to buckets...")
         try:
             file_path = f'{network}/transactions/chat_logs/chat_{session_id}.json'
             blob = bucket.blob(file_path)
-            blob.upload_from_string(json.dumps(message, indent = 4))
+            blob.upload_from_string(json.dumps(request_params, indent = 4))
         except Exception as e:
             print(f'Error uploading chat for chat {session_id}: {str(e)}')
+            
 
 async def write_explanation_to_bucket(network, tx_hash, explanation, model):
     file_path = f'{network}/transactions/explanations/{tx_hash}.json'
