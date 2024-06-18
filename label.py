@@ -109,13 +109,21 @@ def fetch_address_labels(sim_data, endpoint, network):
     except Exception as e:
         print("Error at fetch_address_labels: ", e)
 
-# Add address labels to the original sim_data
-def add_labels(sim_data, endpoint, network):
+# Add Ethereum labels through bigquery
+async def add_labels(sim_data, labels_dataset, bigquery_client):
+    address_regex = r'^0x[0-9a-fA-F]{40}$'
     try:
-        labels_json = json.loads(fetch_address_labels(sim_data, endpoint, network))
-        for key, value in labels_json.items():
-            sim_data[key] = value
-        
+        addresses = extract(sim_data, address_regex)
+        addresses_str = addresses_to_string(addresses)
+        sql = f"""select *
+                  from {labels_dataset}
+                  where lower(address) in ({addresses_str})
+                """
+        query_result_set = bigquery_client.query(sql)
+        results = query_result_set.result()
+        rows = [dict(row) for row in results]
+        sim_data["address_labels"] = rows
+
         return sim_data
     except Exception as e:
         print("Error at add_labels: ", e)
