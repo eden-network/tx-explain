@@ -53,8 +53,10 @@ ANTHROPIC_CLIENT = AsyncAnthropic(api_key=ANTHROPIC_API_KEY)
 DEFAULT_MODEL = os.getenv('DEFAULT_MODEL')
 DEFAULT_MAX_TOKENS = 2000
 DEFAULT_TEMPERATURE = 0
+DEFAULT_CHAT_TEMPERATURE = 1
 DEFAULT_SYSTEM_PROMPT = None
 DEFAULT_CHAT_SYSTEM_PROMPT = None
+DEFAULT_QUESTIONS_PROMPT = None
 RECAPTCHA_TIMEOUT = int(os.getenv('RECAPTCHA_TIMEOUT', 3))
 RECAPTCHA_SECRET_KEY = os.getenv('RECAPTCHA_SECRET_KEY', '')
 
@@ -73,6 +75,9 @@ with open('system_prompt.txt', 'r') as file:
 
 with open('chat_system_prompt.txt', 'r') as file:
     DEFAULT_CHAT_SYSTEM_PROMPT = file.read()
+
+with open('questions_system_prompt.txt', 'r') as file:
+    DEFAULT_QUESTIONS_PROMPT = file.read()
 
 class CategorizationRequest(BaseModel):
     tx_hash: str
@@ -356,6 +361,27 @@ async def explain_txs_chat(message, network, session_id, system_prompt, model, m
 
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Error explaining transaction: {str(e)}")
+
+async def gen_questions(message, network, session_id, system_prompt, model, max_tokens, temperature):
+    # Appending the elements to the template
+    message['model'] = model
+    message['max_tokens'] = max_tokens
+    message['temperature'] = temperature
+    message['system']['system_prompt'] = system_prompt
+    message = await truncate_json(message, 'calls', 1)
+    message['system'] = json.dumps(message['system'], indent=4) # Must be a string because Claude demands it
+
+    try:
+        async for word, usage in chat(
+            ANTHROPIC_CLIENT, message, network, session_id
+        ):
+            yield word
+        print("Usage: ", usage)
+
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Error explaining transaction: {str(e)}")
+
+
 
 @app.get("/")
 async def root():
@@ -642,7 +668,7 @@ async def simulate_for_chat(request: ChatRequest, _: str = Depends(authenticate)
         print(json.dumps(msg))
 
         explanation = ""
-        async for word in explain_txs_chat(request.input_json, network_endpoints[request.network_id][1], request.session_id, DEFAULT_CHAT_SYSTEM_PROMPT, DEFAULT_MODEL, DEFAULT_MAX_TOKENS, DEFAULT_TEMPERATURE):
+        async for word in explain_txs_chat(request.input_json, network_endpoints[request.network_id][1], request.session_id, DEFAULT_CHAT_SYSTEM_PROMPT, DEFAULT_MODEL, DEFAULT_MAX_TOKENS, DEFAULT_CHAT_TEMPERATURE):
             explanation += word
 
         return {"output": explanation}
@@ -655,7 +681,32 @@ async def simulate_for_chat(request: ChatRequest, _: str = Depends(authenticate)
     except HTTPException as e:
         raise e
     except Exception as e:
-        raise HTTPException(status_code=400, detail=str(e))       
+        raise HTTPException(status_code=400, detail=str(e))  
+
+@app.post("/v1/transaction/questions")
+async def generate_questions(request: ChatRequest, _: str = Depends(authenticate)):
+    try:
+
+        global network_endpoints
+
+        msg = {
+            "action": "chat",
+            "input": request.input_json,
+            "network": network_endpoints[request.network_id][1],
+            "session_id": request.session_id  
+        }
+
+        print(json.dumps(msg))
+        questions = ""
+        async for word in gen_questions(request.input_json, network_endpoints[request.network_id][1], request.session_id, DEFAULT_QUESTIONS_PROMPT, DEFAULT_MODEL, DEFAULT_MAX_TOKENS, DEFAULT_CHAT_TEMPERATURE):
+            questions += word
+
+        return {questions}
+
+    except HTTPException as e:
+        raise e
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=str(e))            
     
 
 @app.post("/v1/transaction/categorize")
