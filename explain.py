@@ -208,21 +208,6 @@ async def questions(client, request_params, network, session_id):
     except Exception as e:
         print(f"Error streaming response: {str(e)}")
 
-    # Removing message constraint
-    request_params['messages'] = remove_constraint(request_params['messages'], constraint)
-
-    request_params['system'] = json.loads(request_params['system']) # Back to json
-
-    request_params["messages"].append({"role": "assistant", "content": [{"type": "text", "text": json.dumps(response)}]})
-    
-    if response:
-        print("Writing chat to buckets...")
-        try:
-            file_path = f'{network}/transactions/chat_logs/chat_{session_id}.json'
-            blob = bucket.blob(file_path)
-            blob.upload_from_string(json.dumps(request_params, indent = 4))
-        except Exception as e:
-            print(f'Error uploading chat for chat {session_id}: {str(e)}')
             
 async def write_explanation_to_bucket(network, tx_hash, explanation, model):
     file_path = f'{network}/transactions/explanations/{tx_hash}.json'
