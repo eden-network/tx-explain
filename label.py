@@ -123,7 +123,6 @@ async def add_labels(sim_data, labels_dataset, bigquery_client):
         results = query_result_set.result()
         rows = [dict(row) for row in results]
         sim_data["address_labels"] = rows
-
         return sim_data
     except Exception as e:
         print("Error at add_labels: ", e)

@@ -707,7 +707,6 @@ async def generate_questions(request: ChatRequest, _: str = Depends(authenticate
         raise e
     except Exception as e:
         raise HTTPException(status_code=400, detail=str(e))            
-    
 
 @app.post("/v1/transaction/categorize")
 async def post_categorize_transaction(request: CategorizationRequest, authorization: HTTPAuthorizationCredentials = Depends(auth_scheme)):
