@@ -136,6 +136,7 @@ class ChatRequest(BaseModel):
     input_json: dict
     network_id: str
     session_id: str
+    recaptcha_token: str
 
 class SimulateTransactionsRequest(BaseModel):
     transactions: list[Transaction]
@@ -655,7 +656,9 @@ async def simulate_for_snap(request: SnapRequest, _: str = Depends(authenticate)
 @app.post("/v1/transaction/chat")
 async def simulate_for_chat(request: ChatRequest, _: str = Depends(authenticate)):
     try:
-
+        is_human = await verify_recaptcha(request.recaptcha_token)
+        if not is_human:
+            raise HTTPException(status_code=400, detail="Bot detected")
         global network_endpoints
 
         msg = {
@@ -686,11 +689,13 @@ async def simulate_for_chat(request: ChatRequest, _: str = Depends(authenticate)
 @app.post("/v1/transaction/questions")
 async def generate_questions(request: ChatRequest, _: str = Depends(authenticate)):
     try:
-
+        is_human = await verify_recaptcha(request.recaptcha_token)
+        if not is_human:
+            raise HTTPException(status_code=400, detail="Bot detected")
         global network_endpoints
 
         msg = {
-            "action": "chat",
+            "action": "questions",
             "input": request.input_json,
             "network": network_endpoints[request.network_id][1],
             "session_id": request.session_id  
