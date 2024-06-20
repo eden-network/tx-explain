@@ -83,6 +83,132 @@ async def explain_transaction(client, payload, network='ethereum', system_prompt
             except Exception as e:
                 print(f'Error uploading explanation for {tx_hash}: {str(e)}')
 
+# Add and remove constraints from user messages
+def add_constraint(messages, constraint):
+    try:
+        if messages and messages[-1]['role'] == 'user':
+            latest_user_message = messages[-1]['content']
+            for item in latest_user_message:
+                if item['type'] == 'text':
+                    item['text'] += f" {constraint}"
+                    break
+        return messages
+    except Exception as e:
+        print("Error at add_constraint: ", e)
+
+def remove_constraint(messages, constraint):
+    try:
+        if messages and messages[-1]['role'] == 'user':
+            latest_user_message = messages[-1]['content']
+            for item in latest_user_message:
+                if item['type'] == 'text' and item['text'].endswith(f" {constraint}"):
+                    item['text'] = item['text'][:-len(f" {constraint}")]
+                    break
+        return messages
+    except Exception as e:
+        print("Error at remove_constraint: ", e)
+
+# Removes entries from 'messages'
+async def remove_entries(json_object, num_entries_to_remove):
+    try:
+        if num_entries_to_remove <= 0:
+            return json_object
+
+        print("Removing entries...")
+        json_object['messages'] = json_object['messages'][num_entries_to_remove:]
+        return json_object
+    except Exception as e:
+        print("Error at remove_entries: ", e)
+
+async def chat(client, request_params, network, session_id):
+
+    # Adding message constraint
+    constraint = """
+                Conversation constraint:
+                You are not permitted to discuss or answer any questions completely unrelated to the provided transaction or blockchain technology.
+                - You absolutely cannot answer any questions about general knowledge topics like geography, history, 
+                    popular culture, etc. unless directly relevant to blockchain technology or explaining the transaction.
+                - If the user asks a question unrelated to the transaction details or blockchain, you must respond with the following and nothing else:
+                    "Sorry, I can only assist you with questions directly related to the provided transaction details or general blockchain concepts. 
+                    For example, I could explain gas fees, smart contracts, or consensus mechanisms if relevant to this transaction. 
+                    But I cannot answer questions unrelated to blockchain technology. 
+                    Is there anything else about this transaction you would like to know?"
+                """
+    request_params['messages'] = add_constraint(request_params['messages'], constraint)
+
+    try:
+        response = ""
+        async with client.messages.stream(**request_params) as stream:
+            async for item in stream:
+                usage = item.message.usage if hasattr(item, 'message') and hasattr(item.message, 'usage') else None
+                usage = usage.input_tokens
+                async for word in stream.text_stream:
+                    yield word, usage
+                    response += word
+
+    except Exception as e:
+        error_message = str(e)
+        if "prompt is too long" in error_message:
+            response = ""
+            request_params = await remove_entries(request_params, 8)
+
+            async with client.messages.stream(**request_params) as stream:
+                async for item in stream:
+                    usage = item.message.usage if hasattr(item, 'message') and hasattr(item.message, 'usage') else None
+                    usage = usage.input_tokens
+                    async for word in stream.text_stream:
+                        yield word, usage
+                        response += word
+            
+    except Exception as e:
+        print(f"Error streaming response: {str(e)}")
+
+    # Removing message constraint
+    request_params['messages'] = remove_constraint(request_params['messages'], constraint)
+
+    request_params['system'] = json.loads(request_params['system']) # Back to json
+
+    request_params["messages"].append({"role": "assistant", "content": [{"type": "text", "text": json.dumps(response)}]})
+    
+    if response:
+        print("Writing chat to buckets...")
+        try:
+            file_path = f'{network}/transactions/chat_logs/chat_{session_id}.json'
+            blob = bucket.blob(file_path)
+            blob.upload_from_string(json.dumps(request_params, indent = 4))
+        except Exception as e:
+            print(f'Error uploading chat for chat {session_id}: {str(e)}')
+            
+async def questions(client, request_params, network, session_id):
+
+    try:
+        response = ""
+        async with client.messages.stream(**request_params) as stream:
+            async for item in stream:
+                usage = item.message.usage if hasattr(item, 'message') and hasattr(item.message, 'usage') else None
+                usage = usage.input_tokens
+                async for word in stream.text_stream:
+                    yield word, usage
+                    response += word
+
+    except Exception as e:
+        error_message = str(e)
+        if "prompt is too long" in error_message:
+            response = ""
+            request_params = await remove_entries(request_params, 8)
+
+            async with client.messages.stream(**request_params) as stream:
+                async for item in stream:
+                    usage = item.message.usage if hasattr(item, 'message') and hasattr(item.message, 'usage') else None
+                    usage = usage.input_tokens
+                    async for word in stream.text_stream:
+                        yield word, usage
+                        response += word
+            
+    except Exception as e:
+        print(f"Error streaming response: {str(e)}")
+
+            
 async def write_explanation_to_bucket(network, tx_hash, explanation, model):
     file_path = f'{network}/transactions/explanations/{tx_hash}.json'
     blob = bucket.blob(file_path)

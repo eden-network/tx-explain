@@ -1,12 +1,13 @@
 google-cloud-bigquery==3.19.0
 google-cloud-storage==2.16.0
-google-api-python-client 
-google-auth-httplib2 
+google-api-python-client
+google-auth-httplib2
 google-auth-oauthlib
 groq==0.8.0
 python-dotenv==1.0.1
 requests==2.29.0
-pandas==1.4.1
+pandas==1.5.0
+numpy==1.21.6
 pydantic==1.10.9
 pydantic_core==2.16.3
 anthropic==0.20.0
@@ -22,5 +23,5 @@ uvloop
 httptools
 gunicorn
 gspread
-tenacity
+tenacity==8.0.1
 web3

@@ -9,7 +9,6 @@ from datetime import datetime, timedelta
 from dotenv import load_dotenv
 from web3 import AsyncWeb3
 import decimal
-from flipside import Flipside
 from label import add_labels
 
 w3 = AsyncWeb3(AsyncWeb3.AsyncHTTPProvider('https://cloudflare-eth.com'))
@@ -349,9 +348,7 @@ async def simulate_transaction(tx_hash, block_number, from_address, to_address, 
     tenderly_account_slug = os.getenv('TENDERLY_ACCOUNT_SLUG')
     tenderly_project_slug = os.getenv('TENDERLY_PROJECT_SLUG')
     tenderly_access_key = os.getenv('TENDERLY_ACCESS_KEY')
-    flipside_api_key = os.getenv('FLIPSIDE_API_KEY')
-    flipside_endpoint_url = os.getenv('FLIPSIDE_ENDPOINT_URL')
-    flipside = Flipside(flipside_api_key, flipside_endpoint_url)
+    labels_dataset = os.getenv('LABELS_DATASET')
 
     tx_details = {
         'network_id': NETWORK_CONFIGS[network]['network_id'],
@@ -383,8 +380,11 @@ async def simulate_transaction(tx_hash, block_number, from_address, to_address, 
                 logging.error(f'Error uploading full simulation for {tx_hash}: {str(e)}')
             trimmed = await extract_useful_fields(sim_data)
             # trimmed_logs_applied = await apply_logs(trimmed_decimals)
-            # trimmed = add_labels(trimmed_logs_applied, flipside)
-            # trimmed = add_labels(trimmed_initial, flipside)
+
+            # Fast labeling available only for Ethereum at the moment
+            if network == "ethereum":
+                trimmed = await add_labels(trimmed, labels_dataset, bigquery_client)
+
             try:
                 blob = bucket.blob(f'{network}/transactions/simulations/trimmed/{tx_hash}.json')
                 blob.upload_from_string(json.dumps(trimmed))

@@ -13,7 +13,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse, StreamingResponse
 from anthropic import AsyncAnthropic
 from google.cloud import storage
-from explain import explain_transaction, get_cached_explanation
+from explain import explain_transaction, get_cached_explanation, chat
 from simulate import simulate_transaction, get_cached_simulation
 from simulate_pending import simulate_pending_transaction_tenderly
 from dotenv import load_dotenv
@@ -53,7 +53,10 @@ ANTHROPIC_CLIENT = AsyncAnthropic(api_key=ANTHROPIC_API_KEY)
 DEFAULT_MODEL = os.getenv('DEFAULT_MODEL')
 DEFAULT_MAX_TOKENS = 2000
 DEFAULT_TEMPERATURE = 0
+DEFAULT_CHAT_TEMPERATURE = 1
 DEFAULT_SYSTEM_PROMPT = None
+DEFAULT_CHAT_SYSTEM_PROMPT = None
+DEFAULT_QUESTIONS_PROMPT = None
 RECAPTCHA_TIMEOUT = int(os.getenv('RECAPTCHA_TIMEOUT', 3))
 RECAPTCHA_SECRET_KEY = os.getenv('RECAPTCHA_SECRET_KEY', '')
 
@@ -61,14 +64,20 @@ network_endpoints = {
             '1': (os.getenv('ETH_RPC_ENDPOINT'), 'ethereum'),
             '42161': (os.getenv('ARB_RPC_ENDPOINT'), 'arbitrum'),
             '10': (os.getenv('OP_RPC_ENDPOINT'), 'optimism'),
-            '43114': ('https://api.avax.network/ext/bc/C/rpc', 'avalanche'),
-            '8453': ('https://base.llamarpc.com', 'base'),
-            '81467': ('https://rpc.blast.io', 'blast'),
-            '5000': ('https://rpc.mantle.xyz', 'mantle')
+            '43114': (os.getenv('AVAX_RPC_ENDPOINT'), 'avalanche'),
+            '8453': (os.getenv('BASE_RPC_ENDPOINT'), 'base'),
+            '81467': (os.getenv('BLAST_RPC_ENDPOINT'), 'blast'),
+            '5000': (os.getenv('MANTLE_RPC_ENDPOINT'), 'mantle')
         }
 
 with open('system_prompt.txt', 'r') as file:
     DEFAULT_SYSTEM_PROMPT = file.read()
+
+with open('chat_system_prompt.txt', 'r') as file:
+    DEFAULT_CHAT_SYSTEM_PROMPT = file.read()
+
+with open('questions_system_prompt.txt', 'r') as file:
+    DEFAULT_QUESTIONS_PROMPT = file.read()
 
 class CategorizationRequest(BaseModel):
     tx_hash: str
@@ -122,6 +131,12 @@ class SnapRequest(BaseModel):
     value: str
     input: str
     transaction_index: int
+
+class ChatRequest(BaseModel):
+    input_json: dict
+    network_id: str
+    session_id: str
+    recaptcha_token: str
 
 class SimulateTransactionsRequest(BaseModel):
     transactions: list[Transaction]
@@ -299,6 +314,75 @@ async def explain_txs(transactions, network, system_prompt, model, max_tokens, t
                 yield item
         except Exception as e:
             raise HTTPException(status_code=500, detail=f"Error explaining transaction: {str(e)}")
+
+# Reducing json calls depth
+async def reduce_depth(json_obj, max_depth):
+    print("Reducing json")
+    try:
+        if not isinstance(json_obj, dict):
+            return json_obj
+        if "calls" in json_obj:
+            print("Calls found")
+            if max_depth == 0:
+                del json_obj["calls"]
+            else:
+                json_obj["calls"] = [await reduce_depth(call, max_depth - 1) for call in json_obj["calls"]]
+        return json_obj
+    except Exception as e:
+        print("Error at reduce_depth: ", e)
+        return json_obj
+
+async def truncate_json(json_object, key, max_depth):
+    try:
+        if 'system' in json_object and 'transaction_details' in json_object['system'] and 'call_trace' in json_object['system']['transaction_details']:
+            for item in json_object['system']["transaction_details"]["call_trace"]:
+                if key in item:
+                    item[key] = [await reduce_depth(element, max_depth) for element in item[key]]
+        return json_object
+    except Exception as e:
+        print("Error at truncate_json: ", e)
+        return json_object
+
+
+async def explain_txs_chat(message, network, session_id, system_prompt, model, max_tokens, temperature):
+    # Appending the elements to the template
+    message['model'] = model
+    message['max_tokens'] = max_tokens
+    message['temperature'] = temperature
+    message['system']['system_prompt'] = system_prompt
+    message = await truncate_json(message, 'calls', 1)
+    message['system'] = json.dumps(message['system'], indent=4) # Must be a string because Claude demands it
+
+    try:
+        async for word, usage in chat(
+            ANTHROPIC_CLIENT, message, network, session_id
+        ):
+            yield word
+        print("Usage: ", usage)
+
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Error explaining transaction: {str(e)}")
+
+async def gen_questions(message, network, session_id, system_prompt, model, max_tokens, temperature):
+    # Appending the elements to the template
+    message['model'] = model
+    message['max_tokens'] = max_tokens
+    message['temperature'] = temperature
+    message['system']['system_prompt'] = system_prompt
+    message = await truncate_json(message, 'calls', 1)
+    message['system'] = json.dumps(message['system'], indent=4) # Must be a string because Claude demands it
+
+    try:
+        async for word, usage in chat(
+            ANTHROPIC_CLIENT, message, network, session_id
+        ):
+            yield word
+        print("Usage: ", usage)
+
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Error explaining transaction: {str(e)}")
+
+
 
 @app.get("/")
 async def root():
@@ -566,7 +650,68 @@ async def simulate_for_snap(request: SnapRequest, _: str = Depends(authenticate)
     except HTTPException as e:
         raise e
     except Exception as e:
-        raise HTTPException(status_code=400, detail=str(e))     
+        raise HTTPException(status_code=400, detail=str(e))    
+
+
+@app.post("/v1/transaction/chat")
+async def simulate_for_chat(request: ChatRequest, _: str = Depends(authenticate)):
+    try:
+        is_human = await verify_recaptcha(request.recaptcha_token)
+        if not is_human:
+            raise HTTPException(status_code=400, detail="Bot detected")
+        global network_endpoints
+
+        msg = {
+            "action": "chat",
+            "input": request.input_json,
+            "network": network_endpoints[request.network_id][1],
+            "session_id": request.session_id  
+        }
+
+        print(json.dumps(msg))
+
+        explanation = ""
+        async for word in explain_txs_chat(request.input_json, network_endpoints[request.network_id][1], request.session_id, DEFAULT_CHAT_SYSTEM_PROMPT, DEFAULT_MODEL, DEFAULT_MAX_TOKENS, DEFAULT_CHAT_TEMPERATURE):
+            explanation += word
+
+        return {"output": explanation}
+
+        #return StreamingResponse(
+        #    explain_txs_chat(request.input_json, network_endpoints[request.network_id][1], request.session_id, DEFAULT_CHAT_SYSTEM_PROMPT, DEFAULT_MODEL, DEFAULT_MAX_TOKENS, DEFAULT_TEMPERATURE),
+        #    media_type="text/plain"
+        #)
+
+    except HTTPException as e:
+        raise e
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=str(e))  
+
+@app.post("/v1/transaction/questions")
+async def generate_questions(request: ChatRequest, _: str = Depends(authenticate)):
+    try:
+        is_human = await verify_recaptcha(request.recaptcha_token)
+        if not is_human:
+            raise HTTPException(status_code=400, detail="Bot detected")
+        global network_endpoints
+
+        msg = {
+            "action": "questions",
+            "input": request.input_json,
+            "network": network_endpoints[request.network_id][1],
+            "session_id": request.session_id  
+        }
+
+        print(json.dumps(msg))
+        questions = ""
+        async for word in gen_questions(request.input_json, network_endpoints[request.network_id][1], request.session_id, DEFAULT_QUESTIONS_PROMPT, DEFAULT_MODEL, DEFAULT_MAX_TOKENS, DEFAULT_CHAT_TEMPERATURE):
+            questions += word
+
+        return {questions}
+
+    except HTTPException as e:
+        raise e
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=str(e))            
 
 @app.post("/v1/transaction/categorize")
 async def post_categorize_transaction(request: CategorizationRequest, authorization: HTTPAuthorizationCredentials = Depends(auth_scheme)):
