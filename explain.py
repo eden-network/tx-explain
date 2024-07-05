@@ -125,9 +125,8 @@ async def chat(client, request_params, network, session_id):
     # Adding message constraint
     constraint = """
                 Conversation constraint:
-                You are not permitted to discuss or answer any questions completely unrelated to the provided transaction or blockchain technology.
-                - You absolutely cannot answer any questions about general knowledge topics like geography, history, 
-                    popular culture, etc. unless directly relevant to blockchain technology or explaining the transaction.
+                - You cannot answer any questions about general knowledge topics like geography, history, 
+                    popular culture, etc. unless relevant to blockchain technology or explaining the transaction and its effect on blockchain states/users.
                 - If the user asks a question unrelated to the transaction details or blockchain, you must respond with the following and nothing else:
                     "Sorry, I can only assist you with questions directly related to the provided transaction details or general blockchain concepts. 
                     For example, I could explain gas fees, smart contracts, or consensus mechanisms if relevant to this transaction. 
