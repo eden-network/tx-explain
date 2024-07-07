@@ -25,3 +25,4 @@ gunicorn
 gspread
 tenacity==8.0.1
 web3
+eth_account
