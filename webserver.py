@@ -21,6 +21,7 @@ from typing import List, Optional, Any
 from pydantic import BaseModel, Field, validator
 from tenacity import retry, stop_after_attempt, wait_exponential
 from categorize import categorize  # Import categorize function
+from user import post_user_feedback,count_user_feedback,verify_signature
 import time
 
 load_dotenv()
@@ -154,6 +155,18 @@ class ExplainTransactionsRequest(BaseModel):
     force_refresh: bool = False
     recaptcha_token: str
 
+class UserFeedbackPost(BaseModel):
+    input_json: dict
+    signature: str
+    user: str
+    recaptcha_token: str
+
+class FeedbackCount(BaseModel):
+    signature: str
+    user: str
+    recaptcha_token: str
+
+
 class FeedbackForm(BaseModel):
     date: str
     network: str
@@ -166,6 +179,7 @@ class FeedbackForm(BaseModel):
     accuracy: int = Field(gt=0, lt=6)  # Ensures accuracy is between 1 and 5
     quality: int = Field(gt=0, lt=6)  # Ensures quality is between 1 and 5
     explorer: Optional[str] = None  # Will be set based on network and txHash,
+
 
 
     @validator('explorer', pre=True, always=True)
@@ -753,7 +767,39 @@ async def post_categorize_transaction(request: CategorizationRequest, authorizat
         raise e
     except Exception as e:
         raise HTTPException(status_code=400, detail=str(e))  
-    
+@app.post("/v1/user/feedback")
+async def user_feedabck(request: UserFeedbackPost, _: str = Depends(authenticate)):
+    try:
+        is_human = await verify_recaptcha(request.recaptcha_token)
+        if not is_human:
+            raise HTTPException(status_code=400, detail="Bot detected")  
+        #is_valid_signature= await verify_signature(request.signature,request.user)
+        #if not is_valid_signature:
+            #raise HTTPException(status_code=400, detail="Signature not valid")  
+        
+        result=await post_user_feedback(request.input_json,request.user)
+        return {"response":result}
+    except HTTPException as e:
+        raise e
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=str(e))
+@app.post("/v1/user/feedbackCount")
+async def user_feedabck(request: FeedbackCount, _: str = Depends(authenticate)):
+    try:
+        is_human = await verify_recaptcha(request.recaptcha_token)
+        if not is_human:
+            raise HTTPException(status_code=400, detail="Bot detected")  
+        #is_valid_signature= await verify_signature(request.signature,request.user)
+        #if not is_valid_signature:
+            #raise HTTPException(status_code=400, detail="Signature not valid")  
+        
+        result=await count_user_feedback(request.user)
+        return {"response":result}
+    except HTTPException as e:
+        raise e
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=str(e))    
+
 @app.exception_handler(HTTPException)
 async def http_exception_handler(request: Request, exc: HTTPException):
     return JSONResponse(
