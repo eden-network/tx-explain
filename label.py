@@ -1,9 +1,17 @@
 import json
 import re
+import os
+from dotenv import load_dotenv
 from flipside import Flipside
 import pandas as pd
 import aiohttp
 import asyncio
+
+load_dotenv()
+
+flipside_api_key = os.getenv('FLIPSIDE_API_KEY')
+flipside_endpoint_url = os.getenv('FLIPSIDE_ENDPOINT_URL')
+flipside = Flipside(flipside_api_key, flipside_endpoint_url)
 
 # Recursively iterate over the json object looking for specified pattern
 def explore_json(obj, items, pattern):
@@ -68,6 +76,40 @@ def query_flipside (addresses_str, endpoint, network):
                 where lower(address) in ({addresses_str})
                 """
         query_result_set = endpoint.query(sql)
+        df = pd.DataFrame(query_result_set)
+        return df
+    except Exception as e:
+        print("Error at query_flipside: ", e)
+        return None
+    
+# Async version of labels query for explain_account
+async def async_query_flipside(addresses_str, network, endpoint = flipside):
+    try:
+        if network == 'ethereum':
+            sql = f"""
+                select address,
+                    address_name,
+                    label,
+                    label_type,
+                    label_subtype
+                from ethereum.core.dim_labels 
+                where lower(address) in ({addresses_str})
+                """
+        else:
+            sql = f"""
+                select address,
+                    address_name,
+                    project_name as label,
+                    label_type,
+                    label_subtype
+                from {network}.core.dim_labels 
+                where lower(address) in ({addresses_str})
+                """
+        
+        # Execute the query asynchronously
+        loop = asyncio.get_event_loop()
+        query_result_set = await loop.run_in_executor(None, endpoint.query, sql)
+        
         df = pd.DataFrame(query_result_set)
         return df
     except Exception as e:

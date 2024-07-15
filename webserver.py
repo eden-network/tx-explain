@@ -14,6 +14,7 @@ from fastapi.responses import JSONResponse, StreamingResponse
 from anthropic import AsyncAnthropic
 from google.cloud import storage
 from explain import explain_transaction, get_cached_explanation, chat
+from explain_account import explainAccount
 from simulate import simulate_transaction, get_cached_simulation
 from simulate_pending import simulate_pending_transaction_tenderly
 from dotenv import load_dotenv
@@ -58,6 +59,7 @@ DEFAULT_CHAT_TEMPERATURE = 1
 DEFAULT_SYSTEM_PROMPT = None
 DEFAULT_CHAT_SYSTEM_PROMPT = None
 DEFAULT_QUESTIONS_PROMPT = None
+DEFAULT_ACCOUNT_SYSTEM_PROMPT = None
 RECAPTCHA_TIMEOUT = int(os.getenv('RECAPTCHA_TIMEOUT', 3))
 RECAPTCHA_SECRET_KEY = os.getenv('RECAPTCHA_SECRET_KEY', '')
 
@@ -79,6 +81,9 @@ with open('chat_system_prompt.txt', 'r') as file:
 
 with open('questions_system_prompt.txt', 'r') as file:
     DEFAULT_QUESTIONS_PROMPT = file.read()
+
+with open('account_explain_system_prompt.txt', 'r') as file:
+    DEFAULT_ACCOUNT_SYSTEM_PROMPT = file.read()
 
 class CategorizationRequest(BaseModel):
     tx_hash: str
@@ -166,6 +171,16 @@ class FeedbackCount(BaseModel):
     user: str
     recaptcha_token: str
 
+class ExplainAccountRequest(BaseModel):
+    address: str 
+    network_id: str
+    system_prompt_account: str = DEFAULT_ACCOUNT_SYSTEM_PROMPT
+    system_prompt_transactions: str = DEFAULT_SYSTEM_PROMPT
+    model: str = DEFAULT_MODEL
+    max_tokens: int = DEFAULT_MAX_TOKENS
+    temperature: float = DEFAULT_TEMPERATURE
+    force_refresh: bool = False
+    recaptcha_token: str
 
 class FeedbackForm(BaseModel):
     date: str
@@ -767,6 +782,40 @@ async def post_categorize_transaction(request: CategorizationRequest, authorizat
         raise e
     except Exception as e:
         raise HTTPException(status_code=400, detail=str(e))  
+    
+@app.post("/v1/account/explain")
+async def explain_account(request: ExplainAccountRequest, authorization: HTTPAuthorizationCredentials = Depends(auth_scheme)):
+    try:
+        #is_human = await verify_recaptcha(request.recaptcha_token)
+        #if not is_human:
+        #    raise HTTPException(status_code=400, detail="Bot detected")
+
+        address = request.address
+        network_id = request.network_id
+        if not address:
+            raise HTTPException(status_code=400, detail="Address is required")
+        if not network_id:
+            raise HTTPException(status_code=400, detail='Missing network ID')
+
+        global network_endpoints
+
+        msg = {
+            "action": "ExplainAccount",
+            "address": address,
+            "network": network_endpoints[network_id][1] 
+        }
+
+        print(json.dumps(msg))
+
+        results = await explainAccount(address, network_id, DEFAULT_ACCOUNT_SYSTEM_PROMPT, DEFAULT_SYSTEM_PROMPT)
+
+        return results
+
+    except HTTPException as e:
+        raise e
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=str(e))  
+    
 @app.post("/v1/user/feedback")
 async def user_feedabck(request: UserFeedbackPost, _: str = Depends(authenticate)):
     try:

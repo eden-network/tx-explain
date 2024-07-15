@@ -344,7 +344,7 @@ async def fetch_tenderly_simulation(tx_details, tenderly_account_slug, tenderly_
     ) as response:
         return await response.json()
 
-async def simulate_transaction(tx_hash, block_number, from_address, to_address, gas, value, input_data, tx_index, network):
+async def simulate_transaction(tx_hash, block_number, from_address, to_address, gas, value, input_data, tx_index, network, store_result=True):
     tenderly_account_slug = os.getenv('TENDERLY_ACCOUNT_SLUG')
     tenderly_project_slug = os.getenv('TENDERLY_PROJECT_SLUG')
     tenderly_access_key = os.getenv('TENDERLY_ACCESS_KEY')
@@ -372,12 +372,14 @@ async def simulate_transaction(tx_hash, block_number, from_address, to_address, 
                 sim_data['transaction']['transaction_info']['transaction_id'] = tx_hash
                 if 'call_trace' in sim_data['transaction']['transaction_info']:
                     sim_data['transaction']['transaction_info']['call_trace']['hash'] = tx_hash
-            try:
-                blob = bucket.blob(f'{network}/transactions/simulations/full/{tx_hash}.json')
-                blob.upload_from_string(json.dumps(sim_data))
-                logging.info(f'{tx_hash} full simulation written successfully to bucket')
-            except Exception as e:
-                logging.error(f'Error uploading full simulation for {tx_hash}: {str(e)}')
+            
+            if store_result:
+                try:
+                    blob = bucket.blob(f'{network}/transactions/simulations/full/{tx_hash}.json')
+                    blob.upload_from_string(json.dumps(sim_data))
+                    logging.info(f'{tx_hash} full simulation written successfully to bucket')
+                except Exception as e:
+                    logging.error(f'Error uploading full simulation for {tx_hash}: {str(e)}')
             trimmed = await extract_useful_fields(sim_data)
             # trimmed_logs_applied = await apply_logs(trimmed_decimals)
 
@@ -385,14 +387,16 @@ async def simulate_transaction(tx_hash, block_number, from_address, to_address, 
             if network == "ethereum":
                 trimmed = await add_labels(trimmed, labels_dataset, bigquery_client)
 
-            try:
-                blob = bucket.blob(f'{network}/transactions/simulations/trimmed/{tx_hash}.json')
-                blob.upload_from_string(json.dumps(trimmed))
-                logging.info(f'{tx_hash} trimmed simulation written successfully to bucket')
-            except Exception as e:
-                logging.error(f'Error uploading trimmed simulation for {tx_hash}: {str(e)}')
+            if store_result:
+                try:
+                    blob = bucket.blob(f'{network}/transactions/simulations/trimmed/{tx_hash}.json')
+                    blob.upload_from_string(json.dumps(trimmed))
+                    logging.info(f'{tx_hash} trimmed simulation written successfully to bucket')
+                except Exception as e:
+                    logging.error(f'Error uploading trimmed simulation for {tx_hash}: {str(e)}')
             return trimmed
     return None
+
 async def main(start_day, end_day, network):
     block_ranges = await get_block_ranges_for_date_range(start_day, end_day, network)
 

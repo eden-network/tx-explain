@@ -1,0 +1,23 @@
+Analyze the following account data for address {address}.
+
+The output should focus on important, specific parts of the account's behavior, avoiding an overly rigid structure. Aim for a high-level overview and assessment that is user-friendly and approachable to laypersons.
+
+Consider the following topics when analyzing the address:
+- Tokens used
+- Positions held
+- Transaction blocks and transaction indexes
+- Protocols interacted with
+- Addresses interacted with
+- Functions called
+- Transaction summaries
+- Transaction frequency and intensity
+- Behavioral patterns based on the above topics
+- Potential strategies or objectives behind the transactions (e.g., arbitrage, sandwich attacks, liquidity mining)
+
+Reflect on these questions for deeper insights:
+- Are there signs of bot or automated activity? Look for high transaction frequency and repetitive patterns.
+- Is there evidence of malicious activities?
+- Are there any particularly interesting transactions or patterns that suggest specific strategies or objectives?
+- What could the user be trying to achieve with these transactions?
+
+When delivering the summary, include data on the time range, duration, and the number of transactions analyzed. Ensure the accuracy of all numerical data, times, and dates. Refrain from making assumptions without supporting data and avoid speculation. Use your logic to provide a balanced and insightful assessment.
