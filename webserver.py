@@ -23,6 +23,7 @@ from tenacity import retry, stop_after_attempt, wait_exponential
 from categorize import categorize  # Import categorize function
 from user import post_user_feedback,count_user_feedback,verify_signature
 import time
+from langfuse.decorators import observe, langfuse_context
 
 load_dotenv()
 
@@ -437,7 +438,7 @@ async def get_transaction(request: TransactionRequest, _: str = Depends(authenti
         raise e
     except Exception as e:
         raise HTTPException(status_code=400, detail=str(e))
-    
+  
 @app.post("/v1/transaction/simulate")
 async def simulate_transactions(request: SimulateTransactionsRequest, _: str = Depends(authenticate)):
     try:

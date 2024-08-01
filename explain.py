@@ -7,6 +7,13 @@ from dotenv import load_dotenv
 from anthropic import AsyncAnthropic
 from groq import AsyncGroq
 from google.cloud import storage
+from langfuse.decorators import observe, langfuse_context
+
+import litellm
+from litellm import acompletion
+litellm.success_callback = ["langfuse"]
+litellm.failure_callback = ["langfuse"]
+
 
 load_dotenv()  # Load environment variables from .env file
 
@@ -44,12 +51,17 @@ async def get_cached_explanation(tx_hash, network):
         return json.loads(blob.download_as_string())
     return None
 
+@observe()
 async def explain_transaction(client, payload, network='ethereum', system_prompt=None, model="claude-3-haiku-20240307", max_tokens=2000, temperature=0, store_result=True):
-    request_params = {
-        'model': model,
-        'max_tokens': max_tokens,
-        'temperature': temperature,
-        'messages': [
+    
+    langfuse_context.update_current_trace(name="TXEXPLAIN", tags=["dev", "tx-explain"])
+    trace_id = langfuse_context.get_current_trace_id()
+    explanation = ""
+    response= await acompletion(
+    model=model,
+    temperature=temperature,
+    max_tokens=max_tokens,
+    messages= [
             {
                 "role": "user",
                 "content": [
@@ -59,21 +71,20 @@ async def explain_transaction(client, payload, network='ethereum', system_prompt
                     }
                 ]
             }
-        ]
-    }
-
-    if system_prompt:
-        request_params['system'] = system_prompt
-
-    explanation = ""
-    try:
-        async with client.messages.stream(**request_params) as stream:
-            async for word in stream.text_stream:
-                yield word
-                explanation += word
-    except Exception as e:
-        print(f"Error streaming explanation: {str(e)}")
-    
+        ],
+    system = system_prompt,
+    metadata={
+        "generation_name": model,
+        "trace_id": trace_id,
+        "TEST":"testing this"
+    },
+    stream=True,
+  )
+    async for word in response:
+      if (word["choices"][0]["finish_reason"]==None):
+        yield (word["choices"][0]["delta"]["content"])
+        explanation+=word["choices"][0]["delta"]["content"]
+    langfuse_context.flush()
     if store_result:
         print("Writing explanation to buckets...")
         tx_hash = payload.get('hash')

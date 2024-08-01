@@ -10,6 +10,7 @@ from dotenv import load_dotenv
 from web3 import AsyncWeb3
 import decimal
 from label import add_labels
+from langfuse.decorators import observe, langfuse_context
 
 w3 = AsyncWeb3(AsyncWeb3.AsyncHTTPProvider('https://cloudflare-eth.com'))
 load_dotenv()
@@ -335,7 +336,7 @@ async def get_cached_simulation(tx_hash, network):
     if blob.exists():
         return json.loads(blob.download_as_string())
     return None
-
+@observe()
 async def fetch_tenderly_simulation(tx_details, tenderly_account_slug, tenderly_project_slug, tenderly_access_key, session):
     async with session.post(
         f'https://api.tenderly.co/api/v1/account/{tenderly_account_slug}/project/{tenderly_project_slug}/simulate',
@@ -343,12 +344,13 @@ async def fetch_tenderly_simulation(tx_details, tenderly_account_slug, tenderly_
         headers={'X-Access-Key': tenderly_access_key}
     ) as response:
         return await response.json()
-
+@observe()
 async def simulate_transaction(tx_hash, block_number, from_address, to_address, gas, value, input_data, tx_index, network):
     tenderly_account_slug = os.getenv('TENDERLY_ACCOUNT_SLUG')
     tenderly_project_slug = os.getenv('TENDERLY_PROJECT_SLUG')
     tenderly_access_key = os.getenv('TENDERLY_ACCESS_KEY')
     labels_dataset = os.getenv('LABELS_DATASET')
+    langfuse_context.update_current_trace(name="TXEXPLAIN-SIMULATE", tags=["dev", "tx-explain"])
 
     tx_details = {
         'network_id': NETWORK_CONFIGS[network]['network_id'],
