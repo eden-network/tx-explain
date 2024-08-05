@@ -5,10 +5,10 @@ import argparse
 from datetime import datetime
 from dotenv import load_dotenv
 from anthropic import AsyncAnthropic
-from groq import AsyncGroq
+from groq import Groq, AsyncGroq
 from google.cloud import storage
 
-load_dotenv()  # Load environment variables from .env file
+load_dotenv()
 
 BUCKET_NAME = os.getenv('GCS_BUCKET_NAME')
 storage_client = storage.Client()
@@ -44,6 +44,92 @@ async def get_cached_explanation(tx_hash, network):
         return json.loads(blob.download_as_string())
     return None
 
+async def assets_data(sim_data):
+    try:
+        asset_amounts = [x['amount'] for x in sim_data['asset_changes']]
+        asset_names = [x['token_info']['name'] for x in sim_data['asset_changes']]
+        asset_symbols = [x['token_info']['symbol'] for x in sim_data['asset_changes']]
+
+        assets = [
+            {
+                "amount": amount,
+                "name": name,
+                "symbol": symbol
+            }
+            for amount, name, symbol in zip(asset_amounts, asset_names, asset_symbols)
+        ]
+
+        assets = json.dumps(assets, indent=4)
+
+        return assets
+    except Exception as e:
+        print ("Error at assets_data: ", e)
+        return None
+
+
+async def run_groq_model(system_prompt, user_prompt, model='llama3-70b-8192'):
+    groq_api_key = os.environ.get("GROQ_API_KEY")
+    groq_client = Groq(api_key=groq_api_key)
+
+    try:
+        stream = groq_client.chat.completions.create(
+            model=model,
+            messages=[
+                {"role": "system", "content": system_prompt},
+                {"role": "user", "content": user_prompt}
+            ],
+            stop=None,
+            stream=True, 
+        )
+
+        response_content = ""
+        for chunk in stream:
+            delta_content = chunk.choices[0].delta.content
+            if delta_content:
+                response_content += delta_content
+
+        return response_content
+
+    except Exception as e:
+        print("Error at run_model: ", e)
+        return "Error occurred."
+
+async def correct_summary(sim_data, summary):
+    try:
+        assets = await assets_data(sim_data)  
+
+        system_prompt = """You will be provided with a transaction summary and a asset_changes JSON object with correct data, including token amounts, token names, and symbols.
+                            The transaction summary may contain incorrect numbers and decimal places for certain token amounts. 
+                            Your task is to use the asset_changes JSON object to correct any wrong token amounts in the transaction summary and return the corrected summary.
+                    
+                            Follow these steps to ensure accuracy:
+                                1. Compare every token amount present in the summary with the amounts in the asset_changes JSON object.
+                                2. Pay close attention to the number of decimal places and the correct amount for each token.
+                                3. Correct any discrepancies in the amounts in the summary based on the asset_changes JSON object.
+                                4. Ensure that no wrong amounts are left uncorrected. 
+                                5. Do not speculate; do not add amounts if there are no amounts at places in the summary.
+                            When returning the corrected summary, do not return anything except the corrected text. 
+                            This also includes any other comments before or after the corrected summary, such as 'Here is the corrected summary:', 'Here is the corrected transaction summary:' and the like.
+                            The final output should contain nothing else except the corrected original summary.
+                            Since you make the mistake often, I stress this again: Return the corrected summary, and nothing else.
+                            """
+        user_prompt = f"""
+                    Original summary: \n{summary}
+                    asset_changes: \n{assets}
+                    Important: your output is to be the corrected summary, and nothing else. 
+                    You are strictly prohibited from adding additional intro or outro text.
+                    """
+
+        raw_result = await run_groq_model(system_prompt, user_prompt)
+        corrected_summary = raw_result.strip()
+
+        return corrected_summary
+    except Exception as e:
+        print("Error at correct_summary: ", e)
+        return summary
+
+
+
 async def explain_transaction(client, payload, network='ethereum', system_prompt=None, model="claude-3-haiku-20240307", max_tokens=2000, temperature=0, store_result=True):
     request_params = {
         'model': model,
@@ -69,19 +155,33 @@ async def explain_transaction(client, payload, network='ethereum', system_prompt
     try:
         async with client.messages.stream(**request_params) as stream:
             async for word in stream.text_stream:
-                yield word
                 explanation += word
-    except Exception as e:
-        print(f"Error streaming explanation: {str(e)}")
-    
-    if store_result:
-        print("Writing explanation to buckets...")
+            
+        print("\nOriginal summary: \n", explanation) 
+        corrected_explanation = await correct_summary(payload, explanation)
+        print("\nCorrected summary: \n", corrected_explanation) 
+
+        lines = corrected_explanation.splitlines()
+        for line in lines:
+            words = line.split()
+            for i, word in enumerate(words):
+                if i < len(words):
+                    yield word + " "
+                    await asyncio.sleep(0.01)
+                else:
+                    yield word
+            yield "\n"
+
         tx_hash = payload.get('hash')
-        if explanation and tx_hash:
+        if store_result and tx_hash:
+            print("Writing explanation to buckets...")
             try:
-                await write_explanation_to_bucket(network, tx_hash, explanation, model)
+                await write_explanation_to_bucket(network, tx_hash, corrected_explanation, model)
             except Exception as e:
                 print(f'Error uploading explanation for {tx_hash}: {str(e)}')
+
+    except Exception as e:
+        print(f"Error streaming explanation: {str(e)}")
 
 # Add and remove constraints from user messages
 def add_constraint(messages, constraint):

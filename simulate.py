@@ -379,6 +379,10 @@ async def simulate_transaction(tx_hash, block_number, from_address, to_address, 
             except Exception as e:
                 logging.error(f'Error uploading full simulation for {tx_hash}: {str(e)}')
             trimmed = await extract_useful_fields(sim_data)
+
+            # Add decimals to starting balance
+            trimmed["call_trace"][0]["from_balance"] = str(int(trimmed["call_trace"][0]["from_balance"]) / pow(10, 18))
+            
             # trimmed_logs_applied = await apply_logs(trimmed_decimals)
 
             # Fast labeling available only for Ethereum at the moment
