@@ -461,7 +461,7 @@ async def explain_transactions(request: ExplainTransactionsRequest, _: str = Dep
             "action": "explainRequested",
             "transactions": request.transactions,
             "network": request.network,
-            "system": request.system,
+            "system": DEFAULT_SYSTEM_PROMPT,
             "model": request.model,
             "max_tokens": request.max_tokens,
             "temperature": request.temperature
@@ -471,7 +471,7 @@ async def explain_transactions(request: ExplainTransactionsRequest, _: str = Dep
         # Setting storage status to true
         store_result = True
         return StreamingResponse(
-            explain_txs(request.transactions, request.network, request.system, request.model, request.max_tokens, request.temperature, store_result ,request.force_refresh),
+            explain_txs(request.transactions, request.network, DEFAULT_SYSTEM_PROMPT, request.model, request.max_tokens, request.temperature, store_result ,request.force_refresh),
             media_type="text/plain"
         )
     except HTTPException as e:
