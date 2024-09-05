@@ -462,16 +462,16 @@ async def explain_transactions(request: ExplainTransactionsRequest, _: str = Dep
             "transactions": request.transactions,
             "network": request.network,
             "system": DEFAULT_SYSTEM_PROMPT,
-            "model": request.model,
-            "max_tokens": request.max_tokens,
-            "temperature": request.temperature
+            "model": DEFAULT_MODEL,
+            "max_tokens": DEFAULT_MAX_TOKENS,
+            "temperature": DEFAULT_TEMPERATURE
         }
         print(json.dumps(msg))
 
         # Setting storage status to true
         store_result = True
         return StreamingResponse(
-            explain_txs(request.transactions, request.network, DEFAULT_SYSTEM_PROMPT, request.model, request.max_tokens, request.temperature, store_result ,request.force_refresh),
+            explain_txs(request.transactions, request.network, DEFAULT_SYSTEM_PROMPT, DEFAULT_MODEL, DEFAULT_MAX_TOKENS, DEFAULT_TEMPERATURE, store_result ,request.force_refresh),
             media_type="text/plain"
         )
     except HTTPException as e:
