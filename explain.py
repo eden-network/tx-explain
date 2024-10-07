@@ -14,6 +14,9 @@ BUCKET_NAME = os.getenv('GCS_BUCKET_NAME')
 storage_client = storage.Client()
 bucket = storage_client.bucket(BUCKET_NAME)
 
+with open('QA_system_prompt.txt', 'r', encoding='utf-8') as file:
+    DEFAULT_QA_SYSTEM_PROMPT = file.read()
+
 async def extract_json(string):
     start_index = string.find('{')
     end_index = string.rfind('}')
@@ -101,24 +104,7 @@ async def correct_summary(sim_data, summary, network):
     try:
         assets = await assets_data(sim_data, network)  # Assume assets_data is defined
 
-        system_prompt = """You will be provided with a transaction summary and a asset_changes JSON object with correct data, including token amounts, token names, and symbols.
-
-                            The transaction summary may contain incorrect numbers and decimal places for certain token amounts. 
-
-                            Your task is to use the asset_changes JSON object to correct any wrong token amounts in the transaction summary and return the corrected summary.
-                    
-                            Follow these steps to ensure accuracy:
-                                1. Compare every token amount present in the summary with the amounts in the asset_changes JSON object.
-                                2. Pay close attention to the number of decimal places and the correct amount for each token.
-                                3. Correct any discrepancies in the amounts in the summary based on the asset_changes JSON object.
-                                4. Ensure that no wrong amounts are left uncorrected. 
-                                5. Do not speculate; do not add amounts if there are no amounts at places in the summary.
-
-                            When returning the corrected summary, do not return anything except the corrected text. 
-                            This also includes any other comments before or after the corrected summary, such as 'Here is the corrected summary:', 'Here is the corrected transaction summary:' and the like.
-                            The final output should contain nothing else except the corrected original summary.
-                            Since you make the mistake often, I stress this again: Return the corrected summary, and nothing else.
-                            """
+        system_prompt = DEFAULT_QA_SYSTEM_PROMPT
         user_prompt = f"""
                     Original summary: \n{summary}
                     asset_changes: \n{assets}
