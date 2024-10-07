@@ -275,103 +275,171 @@ async def extract_useful_fields(sim_data):
     return result
 
 async def extract_logs(data):
-    logs = []
+    try:
+        logs = []
     
-    # Check and extract logs from 'transaction_info'
-    transaction_info_logs = data.get('transaction', {}).get('transaction_info', {}).get('logs', [])
-    if transaction_info_logs:
-        logs.extend(transaction_info_logs)
+        # Check and extract logs from 'transaction_info'
+        transaction_info_logs = data.get('transaction', {}).get('transaction_info', {}).get('logs', [])
     
-    # Check and extract logs from 'call_trace'
-    call_trace_logs = data.get('transaction', {}).get('transaction_info', {}).get('call_trace', {}).get('logs', [])
-    if call_trace_logs:
-        logs.extend(call_trace_logs)
+        if transaction_info_logs:
+            logs.extend(transaction_info_logs)
+    
+        # Check and extract logs from 'call_trace'
+        call_trace_logs = data.get('transaction', {}).get('transaction_info', {}).get('call_trace', {}).get('logs', [])
+        if call_trace_logs:
+            logs.extend(call_trace_logs)
 
+
+        return logs
+    except Exception as e:
+        print("Error at extract_logs: ", e)
+        return []
     
-    return logs
+async def call_contract_function(contract, function_name):
+    return await asyncio.to_thread(contract.functions[function_name]().call)
+
+async def get_token_info(w3, token_address):
+    token_address_contract = w3.to_checksum_address(token_address)
+    
+    abi = json.loads('[{"constant":true,"inputs":[],"name":"name","outputs":[{"name":"","type":"string"}],"payable":false,"stateMutability":"view","type":"function"},{"constant":false,"inputs":[{"name":"_spender","type":"address"},{"name":"_value","type":"uint256"}],"name":"approve","outputs":[{"name":"","type":"bool"}],"payable":false,"stateMutability":"nonpayable","type":"function"},{"constant":true,"inputs":[],"name":"totalSupply","outputs":[{"name":"","type":"uint256"}],"payable":false,"stateMutability":"view","type":"function"},{"constant":false,"inputs":[{"name":"_from","type":"address"},{"name":"_to","type":"address"},{"name":"_value","type":"uint256"}],"name":"transferFrom","outputs":[{"name":"","type":"bool"}],"payable":false,"stateMutability":"nonpayable","type":"function"},{"constant":true,"inputs":[],"name":"decimals","outputs":[{"name":"","type":"uint8"}],"payable":false,"stateMutability":"view","type":"function"},{"constant":true,"inputs":[{"name":"_owner","type":"address"}],"name":"balanceOf","outputs":[{"name":"balance","type":"uint256"}],"payable":false,"stateMutability":"view","type":"function"},{"constant":true,"inputs":[],"name":"symbol","outputs":[{"name":"","type":"string"}],"payable":false,"stateMutability":"view","type":"function"},{"constant":false,"inputs":[{"name":"_to","type":"address"},{"name":"_value","type":"uint256"}],"name":"transfer","outputs":[{"name":"","type":"bool"}],"payable":false,"stateMutability":"nonpayable","type":"function"},{"constant":true,"inputs":[{"name":"_owner","type":"address"},{"name":"_spender","type":"address"}],"name":"allowance","outputs":[{"name":"","type":"uint256"}],"payable":false,"stateMutability":"view","type":"function"},{"payable":true,"stateMutability":"payable","type":"fallback"},{"anonymous":false,"inputs":[{"indexed":true,"name":"owner","type":"address"},{"indexed":true,"name":"spender","type":"address"},{"indexed":false,"name":"value","type":"uint256"}],"name":"Approval","type":"event"},{"anonymous":false,"inputs":[{"indexed":true,"name":"from","type":"address"},{"indexed":true,"name":"to","type":"address"},{"indexed":false,"name":"value","type":"uint256"}],"name":"Transfer","type":"event"}]')
+    
+    contract = w3.eth.contract(address=token_address_contract, abi=abi)
+
+    try:
+        token_decimals, token_name, token_symbol = await asyncio.gather(
+            call_contract_function(contract, 'decimals'),
+            call_contract_function(contract, 'name'),
+            call_contract_function(contract, 'symbol'),
+            return_exceptions=True
+        )
+
+        token_decimals = token_decimals if not isinstance(token_decimals, Exception) else None
+        token_name = token_name if not isinstance(token_name, Exception) else None
+        token_symbol = token_symbol if not isinstance(token_symbol, Exception) else None
+    except Exception as e:
+        print("Failed Web3 call for contract: ", token_address_contract)
+        print(e)
+
+    return {
+        "name": token_name,
+        "symbol": token_symbol,
+        "decimals": int(token_decimals) if token_decimals is not None else None
+    }
+
+async def process_log(log, w3, tokens):
+    try:
+        if "raw" not in log:
+            return None
+
+        raw_log = log["raw"]
+        topics = raw_log.get("topics", [])
+        if not topics:
+            return None
+
+        topic0 = topics[0]
+        if topic0 not in ("0xddf252ad1be2c89b69c2b068fc378daa952ba7f163c4a11628f55a4df523b3ef"):
+            return None    
+
+        try:
+            from_ = "0x" + topics[1][26:]
+            to_ = "0x" + topics[2][26:]
+            amount_ = int(raw_log["data"], 16) if raw_log["data"] != '0x' else 0
+            token_address = raw_log["address"]
+        except Exception as e:
+            print("Problem parsing log: ", e)
+
+        token_info = tokens[token_address]
+
+        return {
+            "topic0": topic0,
+            "token_address": token_address,
+            "from": from_,
+            "to": to_,
+            "amount": (decimal.Decimal(amount_) / decimal.Decimal(10**token_info["decimals"])) if token_info["decimals"] is not None else amount_,
+            "token_name": token_info["name"],
+            "token_symbol": token_info["symbol"],
+            "token_decimals": token_info["decimals"]
+        }
+    except Exception as e:
+        print("Error at process_log: ", e)
+        return {}
 
 async def apply_logs(sim_data, sim_data_full, network):
-    result=sim_data
-
-    if network == "arbitrum":
-        w3 = Web3(Web3.HTTPProvider(os.getenv('ARB_RPC_ENDPOINT')))
-    elif network == "ethereum":
-        w3 = Web3(Web3.HTTPProvider(os.getenv('ETH_RPC_ENDPOINT')))
-    elif network == "base":
-        w3 = Web3(Web3.HTTPProvider(os.getenv('BASE_RPC_ENDPOINT')))
-    elif network == "optimism":
-        w3 = Web3(Web3.HTTPProvider(os.getenv('OP_RPC_ENDPOINT')))
-    elif network == "avalanche":
-        w3 = Web3(Web3.HTTPProvider(os.getenv('AVAX_RPC_ENDPOINT')))
-    elif network == "blast":
-        w3 = Web3(Web3.HTTPProvider(os.getenv('BLAST_RPC_ENDPOINT')))
-    elif network == "mantle":
-        w3 = Web3(Web3.HTTPProvider(os.getenv('MANTLE_RPC_ENDPOINT')))
-    
     try:
-        transfers = []
-        tokens = {}
+        result = sim_data
 
-        tx_hash=sim_data["hash"]
-        logs = await extract_logs(sim_data_full)
+        if network == "arbitrum":
+            w3 = Web3(Web3.HTTPProvider(os.getenv('ARB_RPC_ENDPOINT')))
+        elif network == "ethereum":
+            w3 = Web3(Web3.HTTPProvider(os.getenv('ETH_RPC_ENDPOINT')))
+        elif network == "base":
+            w3 = Web3(Web3.HTTPProvider(os.getenv('BASE_RPC_ENDPOINT')))
+        elif network == "optimism":
+            w3 = Web3(Web3.HTTPProvider(os.getenv('OP_RPC_ENDPOINT')))
+        elif network == "avalanche":
+            w3 = Web3(Web3.HTTPProvider(os.getenv('AVAX_RPC_ENDPOINT')))
+        elif network == "blast":
+            w3 = Web3(Web3.HTTPProvider(os.getenv('BLAST_RPC_ENDPOINT')))
+        elif network == "mantle":
+            w3 = Web3(Web3.HTTPProvider(os.getenv('MANTLE_RPC_ENDPOINT')))
 
-        for log in logs:
-            if "raw" in log:
-                raw_log = log["raw"]
-                topic0 = raw_log.get("topics", [])[0]
-                if not topic0:
-                    continue
+            
+        try:
+            tx_hash = sim_data["hash"]
+            logs = await extract_logs(sim_data_full)
 
-                if topic0=="0xddf252ad1be2c89b69c2b068fc378daa952ba7f163c4a11628f55a4df523b3ef":
-                    transfer_from = "0x" + raw_log["topics"][1][26:]
-                    transfer_to = "0x" + raw_log["topics"][2][26:]
-                    if raw_log["data"] != '0x':
-                        transfer_amount = int(raw_log["data"], 16)
-                    else:
-                        transfer_amount = 0  
-                    token_address = raw_log["address"]
+            # Collect unique token addresses
+            unique_token_addresses = set()
+            for log in logs:
+                if "raw" in log and log["raw"].get("topics", [])[0] in ("0xddf252ad1be2c89b69c2b068fc378daa952ba7f163c4a11628f55a4df523b3ef" # Transfers, Mints, Burns
+                                                                    ): 
+                    unique_token_addresses.add(log["raw"]["address"])
 
-                    if token_address not in tokens:
-                        token_address_contract= w3.to_checksum_address(token_address)
-                        
-                        print(token_address)
-                        abi='[{"constant": true,"inputs": [],"name": "name","outputs": [{"name": "","type": "string"}],"payable": false,"stateMutability": "view","type": "function"},{"constant": false,"inputs": [{"name": "_spender","type": "address"},{"name": "_value","type": "uint256"}],"name": "approve","outputs": [{"name": "","type": "bool"}],"payable": false,"stateMutability": "nonpayable","type": "function"},{"constant": true,"inputs": [],"name": "totalSupply","outputs": [{"name": "","type": "uint256"}],"payable": false,"stateMutability": "view","type": "function"},{"constant": false,"inputs": [{"name": "_from","type": "address"},{"name": "_to","type": "address"},{"name": "_value","type": "uint256"}],"name": "transferFrom","outputs": [{"name": "","type": "bool"}],"payable": false,"stateMutability": "nonpayable","type": "function"},{"constant": true,"inputs": [],"name": "decimals","outputs": [{"name": "","type": "uint8"}],"payable": false,"stateMutability": "view","type": "function"},{"constant": true,"inputs": [{"name": "_owner","type": "address"}],"name": "balanceOf","outputs": [{"name": "balance","type": "uint256"}],"payable": false,"stateMutability": "view","type": "function"},{"constant": true,"inputs": [],"name": "symbol","outputs": [{"name": "","type": "string"}],"payable": false,"stateMutability": "view","type": "function"},{"constant": false,"inputs": [{"name": "_to","type": "address"},{"name": "_value","type": "uint256"}],"name": "transfer","outputs": [{"name": "","type": "bool"}],"payable": false,"stateMutability": "nonpayable","type": "function"},{"constant": true,"inputs": [{"name": "_owner","type": "address"},{"name": "_spender","type": "address"}],"name": "allowance","outputs": [{"name": "","type": "uint256"}],"payable": false,"stateMutability": "view","type": "function"},{"payable": true,"stateMutability": "payable","type": "fallback"},{"anonymous": false,"inputs": [{"indexed": true,"name": "owner","type": "address"},{"indexed": true,"name": "spender","type": "address"},{"indexed": false,"name": "value","type": "uint256"}],"name": "Approval","type": "event"},{"anonymous": false,"inputs": [{"indexed": true,"name": "from","type": "address"},{"indexed": true,"name": "to","type": "address"},{"indexed": false,"name": "value","type": "uint256"}],"name": "Transfer","type": "event"}]'
-                        contract = w3.eth.contract(address=token_address_contract, abi=abi)
-                        token_decimals= contract.functions.decimals().call()
-                        token_name= contract.functions.name().call()
-                        token_symbol= contract.functions.symbol().call()
-                        token_obj={
-                            "name": token_name,
-                            "symbol" : token_symbol,
-                            "decimals" : int(token_decimals)
-                        }
-                        tokens[token_address]=token_obj
-                    transfer_obj={
-                        "token_address": token_address,
-                        "from" : transfer_from,
-                        "to" : transfer_to,
-                        "amount" : decimal.Decimal(transfer_amount)/decimal.Decimal(10**tokens[token_address]["decimals"]),
-                        "token_name" : tokens[token_address]["name"],
-                        "token_symbol" : tokens[token_address]["symbol"],
-                        "token_decimals" : tokens[token_address]["decimals"]
-                    }
-                    transfers.append(transfer_obj)
+            # Fetch token info for all unique addresses concurrently
+            token_info_tasks = [get_token_info(w3, address) for address in unique_token_addresses]
+            token_infos = await asyncio.gather(*token_info_tasks)
+            tokens = dict(zip(unique_token_addresses, token_infos))
+
+            # Process all logs concurrently
+            event_objs = await asyncio.gather(*[process_log(log, w3, tokens) for log in logs])
+            events = [obj for obj in event_objs if obj is not None]
+            # Distinguishing the events
+            transfers = [obj for obj in events if obj['topic0'] == "0xddf252ad1be2c89b69c2b068fc378daa952ba7f163c4a11628f55a4df523b3ef"]
+
+            # Fixing existing entries
             for asset_change in result["asset_changes"]:
                 if asset_change["amount"] is None:
-                    token_address=asset_change["token_info"]["contract_address"]
-                    transfer_from=asset_change["from"]
-                    transfer_to=asset_change["to"]
+                    token_address = asset_change["token_info"]["contract_address"]
+                    if asset_change['type'] == 'Mint':
+                        transfer_from = '0x0000000000000000000000000000000000000000'
+                    else:
+                        transfer_from = asset_change["from"]
+                    if asset_change['type'] == 'Burn':
+                        transfer_to = '0x0000000000000000000000000000000000000000'
+                    else:
+                        transfer_to = asset_change["to"]
                     for transfer in transfers:
-                        if (transfer["from"]==transfer_from and transfer["to"]==transfer_to and transfer["token_address"].lower()==token_address.lower()):
-                            asset_change["amount"]=str(transfer["amount"])
-                            asset_change["token_info"]["symbol"]=transfer["token_symbol"]
-                            asset_change["token_info"]["name"]=transfer["token_name"]
-                            asset_change["token_info"]["decimals"]=transfer["token_decimals"]    
-                            asset_change["token_info"]["type"]="Fungible"
+                        if (transfer["from"] == transfer_from and 
+                            transfer["to"] == transfer_to and 
+                            transfer["token_address"].lower() == token_address.lower()):
 
+                            asset_change["amount"] = (str(transfer["amount"])) if asset_change["token_info"]['standard'] != "ERC721" else None
+                            asset_change["token_info"]["symbol"] = transfer["token_symbol"]
+                            asset_change["token_info"]["name"] = transfer["token_name"]
+                            asset_change["token_info"]["decimals"] = transfer["token_decimals"]    
+                            asset_change["token_info"]["type"] = "Fungible"
+                            break
+
+            print("\nFixed asset_change: ")
+            print(json.dumps(result['asset_changes'], indent= 4))
+
+        except Exception as e:
+            print(f"An error occurred: {e}")
+
+        return result
     except Exception as e:
-        print(e)
-    return result
+        print("Error at apply_logs: ", e)
+        return result
 
 async def get_cached_simulation(tx_hash, network):
     blob = bucket.blob(f'{network}/transactions/simulations/trimmed/{tx_hash}.json')
