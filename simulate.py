@@ -455,6 +455,14 @@ async def fetch_tenderly_simulation(tx_details, tenderly_account_slug, tenderly_
     ) as response:
         return await response.json()
 
+async def upload_to_bucket(data, path):
+        try:
+            blob = bucket.blob(path)
+            await asyncio.to_thread(blob.upload_from_string, json.dumps(data))
+            logging.info(f'{path} written successfully to bucket')
+        except Exception as e:
+            logging.error(f'Error uploading {path}: {str(e)}')
+
 async def simulate_transaction(tx_hash, block_number, from_address, to_address, gas, value, input_data, tx_index, network):
     tenderly_account_slug = os.getenv('TENDERLY_ACCOUNT_SLUG')
     tenderly_project_slug = os.getenv('TENDERLY_PROJECT_SLUG')
@@ -483,12 +491,12 @@ async def simulate_transaction(tx_hash, block_number, from_address, to_address, 
                 sim_data['transaction']['transaction_info']['transaction_id'] = tx_hash
                 if 'call_trace' in sim_data['transaction']['transaction_info']:
                     sim_data['transaction']['transaction_info']['call_trace']['hash'] = tx_hash
-            try:
-                blob = bucket.blob(f'{network}/transactions/simulations/full/{tx_hash}.json')
-                blob.upload_from_string(json.dumps(sim_data))
-                logging.info(f'{tx_hash} full simulation written successfully to bucket')
-            except Exception as e:
-                logging.error(f'Error uploading full simulation for {tx_hash}: {str(e)}')
+            
+            full_upload_task = asyncio.create_task(
+                upload_to_bucket(sim_data, f'{network}/transactions/simulations/full/{tx_hash}.json')
+            )
+            logging.info(f'{tx_hash} full simulation written successfully to bucket')
+
             trimmed = await extract_useful_fields(sim_data)
             trimmed_logs_applied = await apply_logs(trimmed, sim_data, network)
 
@@ -496,12 +504,11 @@ async def simulate_transaction(tx_hash, block_number, from_address, to_address, 
             if network == "ethereum":
                 trimmed_logs_applied = await add_labels(trimmed_logs_applied, labels_dataset, bigquery_client)
 
-            try:
-                blob = bucket.blob(f'{network}/transactions/simulations/trimmed/{tx_hash}.json')
-                blob.upload_from_string(json.dumps(trimmed_logs_applied))
-                logging.info(f'{tx_hash} trimmed simulation written successfully to bucket')
-            except Exception as e:
-                logging.error(f'Error uploading trimmed simulation for {tx_hash}: {str(e)}')
+            trimmed_upload_task = asyncio.create_task(
+                upload_to_bucket(trimmed_logs_applied, f'{network}/transactions/simulations/trimmed/{tx_hash}.json')
+            )
+            logging.info(f'{tx_hash} trimmed simulation written successfully to bucket')
+
             return trimmed_logs_applied
     return None
 async def main(start_day, end_day, network):
