@@ -495,7 +495,6 @@ async def simulate_transaction(tx_hash, block_number, from_address, to_address, 
             full_upload_task = asyncio.create_task(
                 upload_to_bucket(sim_data, f'{network}/transactions/simulations/full/{tx_hash}.json')
             )
-            logging.info(f'{tx_hash} full simulation written successfully to bucket')
 
             trimmed = await extract_useful_fields(sim_data)
             trimmed_logs_applied = await apply_logs(trimmed, sim_data, network)
@@ -504,9 +503,7 @@ async def simulate_transaction(tx_hash, block_number, from_address, to_address, 
             if network == "ethereum":
                 trimmed_logs_applied = await add_labels(trimmed_logs_applied, labels_dataset, bigquery_client)
 
-            upload_to_bucket(trimmed_logs_applied, f'{network}/transactions/simulations/trimmed/{tx_hash}.json')
-            
-            logging.info(f'{tx_hash} trimmed simulation written successfully to bucket')
+            await upload_to_bucket(trimmed_logs_applied, f'{network}/transactions/simulations/trimmed/{tx_hash}.json')
 
             return trimmed_logs_applied
     return None
